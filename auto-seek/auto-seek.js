@@ -549,6 +549,11 @@
         view.error = error.message;
         view.promise = null;
         render();
+        // The strip stops saying it is working and says why instead.
+        if (view.strip) {
+          view.strip.classList.remove("is-busy");
+          labelStrip(view, `Auto Seek: ${error.message}`);
+        }
         throw error;
       },
     );
@@ -680,6 +685,8 @@
       if (strip && view.state === "busy") {
         strip.classList.add("is-busy");
         labelStrip(view, "Finding where the action starts…");
+      } else if (strip && view.state === "error") {
+        labelStrip(view, `Auto Seek: ${view.error}`);
       }
     }).catch(() => {});
     // Work it out right away, so a click finds the answer ready.

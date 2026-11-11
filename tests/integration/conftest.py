@@ -137,7 +137,7 @@ def hide_data(in_stash):
 
     yield hide
     # A download started meanwhile must not write into the restored files.
-    in_stash("pkill -f 'auto_seek.py .* download' || true; rm -f " + data + "/download.lock")
+    in_stash("pkill -f '[a]uto_seek.py .* download' || true; rm -f " + data + "/download.lock")
     for name in hidden:
         in_stash(
             f"cd {data} && if [ -e {name}.hidden ]; then rm -rf {name} && mv {name}.hidden {name}; fi"
