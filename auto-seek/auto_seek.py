@@ -942,8 +942,13 @@ def model_bytes() -> bytes:
     return model
 
 
-def scorer(threads: int) -> ort_api.Session:
-    """The model, loaded once per process."""
+class FilesMissing(ValueError):
+    """The model or ONNX Runtime isn't on the server (yet)."""
+
+
+def scorer(threads: int, download: bool = True) -> ort_api.Session:
+    """The model, loaded once per process. Missing files start the download
+    unless `download` is off (the viewer turned downloads off)."""
     if threads not in _scorer:
         started = time.monotonic()
         verified = read_json(VERIFIED_PATH, {})
@@ -953,8 +958,12 @@ def scorer(threads: int) -> ort_api.Session:
                 f"Auto Seek can't run on this server ({sys.platform}, {platform.machine()})"
             )
         if not all(file_ready(entry, verified) for entry in (MODEL, runtime)):
+            if not download:
+                raise FilesMissing(
+                    "The model isn't downloaded: downloads are turned off in Auto Seek's settings"
+                )
             ensure()
-            raise ValueError("The model is still downloading on the server")
+            raise FilesMissing("The model is still downloading on the server")
         model = model_bytes()
         read = time.monotonic()
         _scorer.clear()
@@ -991,7 +1000,8 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     if eager:  # someone is watching the strip
         write_progress(scene_id, duration, live, "loading")
     try:
-        session = scorer(threads_setting(plugin_settings(config)))
+        settings = plugin_settings(config)
+        session = scorer(threads_setting(settings), settings.get("disableDownload") is not True)
     except Exception:
         # e.g. still downloading: the player should see the download instead
         with contextlib.suppress(OSError):
@@ -1188,7 +1198,7 @@ def library_task(args: dict, server: dict) -> dict:
             analyse_scene(scene_id, server)
             analysed += 1
         except Exception as error:  # one bad file must not stop the run
-            if "still downloading" in str(error) or "can't run" in str(error):
+            if isinstance(error, FilesMissing) or "can't run" in str(error):
                 raise
             record_failure(scene_id, error)
             failed += 1
@@ -1264,7 +1274,7 @@ def worker() -> None:
                 try:
                     analyse_scene(scene_id, server)
                 except Exception as error:
-                    if "still downloading" in str(error):
+                    if isinstance(error, FilesMissing):
                         return  # the queue keeps it for the next new scene
                     record_failure(scene_id, error)
             with contextlib.closing(cache()) as connection, connection:

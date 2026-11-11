@@ -3,6 +3,8 @@ which the backend answers from its cache without the model."""
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import dismiss_modals
 from playwright.sync_api import Page, expect
@@ -82,11 +84,6 @@ def test_the_flag_marks_the_start_for_good(page, base_url, scene, operation, err
     assert errors == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="disableDownload is not respected: analyse calls ensure() when the files are "
-    "missing (scorer() in auto_seek.py), so opening a scene starts the download",
-)
 def test_without_the_model_the_player_still_works(
     page, base_url, scene, operation, configure, hide_data, errors
 ) -> None:
@@ -105,12 +102,17 @@ def test_without_the_model_the_player_still_works(
         ),
     )
     open_scene(page, base_url, scene)
+    # The player says why instead of waiting for a download that never comes.
     button = page.locator(".auto-seek-button")
-    expect(button).to_have_attribute("data-state", "busy")
-    page.wait_for_timeout(3000)
+    expect(button).to_have_attribute("data-state", "error")
+    expect(page.locator(".auto-seek-strip-label")).to_contain_text("downloads are turned off")
+    expect(page.locator(".auto-seek-strip")).not_to_have_class(re.compile(r"\bis-busy\b"))
+    asked = requested.count("analyse")
+    page.wait_for_timeout(5000)
     status = operation(op="status")
     assert not status["ready"] and not status["downloading"], status
     assert "ensure" not in requested  # the setting is respected
+    assert requested.count("analyse") == asked  # and it stops asking
     page.locator(".video-js video").evaluate(
         "video => { video.muted = true; return video.play(); }"
     )

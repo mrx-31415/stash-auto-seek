@@ -438,6 +438,18 @@ def test_model_is_read_from_a_local_copy_once_made(backend, monkeypatch, tmp_pat
     assert [p.name for p in copies] == [backend.MODEL["sha256"][:16] + ".onnx"]
 
 
+def test_missing_files_start_the_download_only_when_allowed(backend, monkeypatch):
+    monkeypatch.setattr(backend, "platform_key", lambda: next(iter(backend.RUNTIMES)))
+    started = []
+    monkeypatch.setattr(backend, "ensure", lambda: started.append(1) or {})
+    with pytest.raises(backend.FilesMissing, match="turned off"):
+        backend.scorer(2, download=False)
+    assert started == []  # "Don't download the model" is respected
+    with pytest.raises(backend.FilesMissing, match="still downloading"):
+        backend.scorer(2)
+    assert started == [1]
+
+
 def test_analyse_answers_from_the_cache(backend, monkeypatch):
     backend.put_point(
         {
