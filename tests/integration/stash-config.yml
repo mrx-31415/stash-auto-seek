@@ -1,0 +1,11 @@
+# A minimal Stash for the integration tests: one library folder holding the
+# synthetic clip scripts/integration generates.
+generated: /root/.stash/generated
+cache: /root/.stash/cache
+blobs:
+  path: /root/.stash/blobs
+  storage: FILESYSTEM
+database: /root/.stash/stash-go.sqlite
+dangerous_allow_public_without_auth: true
+stash:
+  - path: /media

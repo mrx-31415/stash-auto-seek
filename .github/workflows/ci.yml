@@ -23,5 +23,43 @@ jobs:
           node-version: "22"
       - run: python -m pip install --quiet pytest==8.4.2
       - run: for f in */*.js; do node --check "$f"; done
-      - run: python -m pytest -q tests
+      - run: python -m pytest -q tests --ignore=tests/integration
       - run: python scripts/build.py --dev
+
+  integration:
+    # A throwaway Stash in Docker with the plugin built from this commit, one
+    # synthetic clip, and Playwright driving Stash's own scene page.
+    name: Integration (Stash ${{ matrix.stash }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        stash: [v0.31.1, latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet -r tests/integration/requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/integration/requirements.txt') }}
+      - run: python -m playwright install --only-shell chromium
+      # The model and ONNX Runtime (about 100 MB). The plugin checks them
+      # against its pinned hashes and fetches whatever changed.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/auto-seek-files
+          key: auto-seek-files-${{ hashFiles('auto-seek/auto_seek.py') }}
+          restore-keys: auto-seek-files-
+      - run: AUTO_SEEK_FILES="$HOME/.cache/auto-seek-files" scripts/integration
+        env:
+          STASH_IMAGE: stashapp/stash:${{ matrix.stash }}
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: integration-${{ matrix.stash }}
+          path: test-results/
+          retention-days: 7

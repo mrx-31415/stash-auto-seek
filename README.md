@@ -31,10 +31,24 @@ Auto Seek was developed in [stash-curator](https://github.com/mrx-31415/stash-cu
 until 0.2.0; references like `mrx-31415/stash-curator#473` in the history point there.
 
 ```bash
-python -m pytest tests          # needs pytest and node
+python -m pytest tests --ignore=tests/integration   # unit tests; needs pytest and node
 python scripts/build.py         # dist/auto-seek.zip and dist/auto-seek-index.yml
 python scripts/build.py --dev   # the dev source in dist/dev/
 ```
+
+The integration tests run the built plugin in a throwaway Stash (Docker), with one
+synthetic clip scanned, and drive Stash's own scene page with Playwright:
+
+```bash
+pip install -r tests/integration/requirements.txt && playwright install chromium
+scripts/integration                      # everything, against stashapp/stash:v0.31.1
+scripts/integration -m "not model"       # skip the tests that download and run the model
+STASH_IMAGE=stashapp/stash:latest AUTO_SEEK_FILES=~/.cache/auto-seek-files scripts/integration
+```
+
+`AUTO_SEEK_FILES` keeps the downloaded model and runtime (about 100 MB) between runs;
+`KEEP_STASH=1` leaves the Stash running afterwards. CI runs them against v0.31.1 and
+`latest`.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
 release-please bumps `version:` in `auto-seek/auto-seek.yml`, updates
