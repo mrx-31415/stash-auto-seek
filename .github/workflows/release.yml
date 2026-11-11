@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.release.outputs['auto-seek--release_created'] }}
+      tag: ${{ steps.release.outputs['auto-seek--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  attach:
+    name: Attach the plugin archive to the release
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    env:
+      HUB_TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
+    steps:
+      # Build from the release's own commit, not whatever main is by now.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/build.py
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release upload "${{ needs.release-please.outputs.tag }}"
+          dist/auto-seek.zip dist/auto-seek-index.yml
+      # The plugin hub (mrx-31415/stash-plugins) picks the release up within the
+      # hour; with a HUB_DISPATCH_TOKEN secret it is told right away.
+      - name: Tell the plugin hub
+        if: env.HUB_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.HUB_TOKEN }}
+        run: gh api repos/mrx-31415/stash-plugins/dispatches -f event_type=plugin-released

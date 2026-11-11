@@ -1,0 +1,39 @@
+name: Dev plugin source
+
+# Rebuilds the dev plugin source (dev/index.yml) from main on every push.
+# Releases are served from the release assets, through the plugin hub.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}dev/index.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # dev_version() counts the commits since the last release tag.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/build.py --dev
+      - run: mkdir -p _site && cp -r dist/dev _site/dev
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

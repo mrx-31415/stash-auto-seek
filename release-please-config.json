@@ -1,0 +1,15 @@
+{
+  "packages": {
+    "auto-seek": {
+      "release-type": "simple",
+      "component": "auto-seek",
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "auto-seek.yml"
+        }
+      ]
+    }
+  }
+}

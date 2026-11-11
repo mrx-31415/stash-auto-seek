@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: python -m pip install --quiet pytest==8.4.2
+      - run: for f in */*.js; do node --check "$f"; done
+      - run: python -m pytest -q tests
+      - run: python scripts/build.py --dev
