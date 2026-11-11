@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Run the integration tests against a throwaway Stash in Docker, with the
+# plugin built from this checkout installed and one synthetic clip scanned.
+#
+#   scripts/integration [pytest arguments]     (default: tests/integration)
+#
+# Needs docker (compose v2) and python with pytest-playwright and its Chromium
+# (pip install -r tests/integration/requirements.txt; playwright install chromium).
+# STASH_IMAGE picks the Stash image (default stashapp/stash:v0.31.1).
+# AUTO_SEEK_FILES, when set, is a folder that keeps the downloaded model and
+# runtime between runs: copied in before the run, saved back after it.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+PLUGIN_ID=auto-seek
+export STASH_IMAGE="${STASH_IMAGE:-stashapp/stash:v0.31.1}"
+export STASH_PORT="${STASH_PORT:-9999}"
+work="${INTEGRATION_DIR:-${RUNNER_TEMP:-/tmp}/$PLUGIN_ID-integration}"
+export STASH_CONFIG="$work/config" STASH_MEDIA="$work/media"
+plugin="$STASH_CONFIG/plugins/$PLUGIN_ID"
+compose=(docker compose -p "$PLUGIN_ID-integration" -f "$(pwd)/tests/integration/docker-compose.yml")
+export INTEGRATION_COMPOSE="${compose[*]}"
+
+# Stash runs as root in the container: remove what it wrote with a container too.
+reset() {
+  "${compose[@]}" down --volumes >/dev/null 2>&1 || true
+  mkdir -p "$work"
+  docker run --rm -v "$work:/work" --entrypoint sh "$STASH_IMAGE" -c 'rm -rf /work/config /work/media'
+}
+save_files() {
+  if [[ -n "${AUTO_SEEK_FILES:-}" && -f "$plugin/data/verified.json" ]]; then
+    mkdir -p "$AUTO_SEEK_FILES"
+    docker run --rm -v "$plugin/data:/data" -v "$(realpath "$AUTO_SEEK_FILES"):/keep" \
+      --entrypoint sh "$STASH_IMAGE" -c "cp -a /data/files /data/verified.json /keep/ && chown -R $(id -u):$(id -g) /keep"
+  fi
+}
+finish() {
+  save_files || true
+  if [[ -n "${KEEP_STASH:-}" ]]; then
+    echo "[integration] Stash left running at http://localhost:$STASH_PORT"
+  else
+    reset
+  fi
+}
+reset
+trap finish EXIT
+
+echo "[integration] building the plugin …"
+python3 scripts/build.py >/dev/null
+mkdir -p "$STASH_CONFIG"/{generated,cache,blobs} "$plugin" "$STASH_MEDIA"
+unzip -oq "dist/$PLUGIN_ID.zip" -d "$plugin"
+cp tests/integration/stash-config.yml "$STASH_CONFIG/config.yml"
+if [[ -n "${AUTO_SEEK_FILES:-}" && -f "$AUTO_SEEK_FILES/verified.json" ]]; then
+  echo "[integration] reusing the model and runtime from $AUTO_SEEK_FILES"
+  mkdir -p "$plugin/data"
+  cp -a "$AUTO_SEEK_FILES/files" "$AUTO_SEEK_FILES/verified.json" "$plugin/data/"
+fi
+
+# 40 seconds of a moving test pattern (no frame is blank), small and fast to scan.
+echo "[integration] generating the test clip …"
+docker run --rm -v "$STASH_MEDIA:/media" --entrypoint ffmpeg "$STASH_IMAGE" -loglevel error \
+  -f lavfi -i testsrc2=s=320x180:r=10 -t 40 -c:v libx264 -pix_fmt yuv420p -movflags +faststart \
+  /media/clip.mp4
+
+echo "[integration] starting $STASH_IMAGE …"
+"${compose[@]}" up -d --wait
+
+# Without a test path, run the whole integration folder (never the unit tests).
+paths=(tests/integration)
+for arg in "$@"; do [[ "$arg" == tests/* ]] && paths=(); done
+python3 -m pytest "${paths[@]}" "$@" -v -p no:cacheprovider \
+  --base-url "http://localhost:$STASH_PORT" --browser chromium \
+  --screenshot only-on-failure --video retain-on-failure --output test-results
