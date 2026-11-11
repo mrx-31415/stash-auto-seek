@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.2.0...auto-seek-v0.2.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* respect "Don't download the model" and stop waiting when it's off ([#3](https://github.com/mrx-31415/stash-auto-seek/issues/3)) ([79eb869](https://github.com/mrx-31415/stash-auto-seek/commit/79eb869acb717c142b007d863b616c875466880d))
+
 ## [0.2.0](https://github.com/mrx-31415/stash-curator/compare/auto-seek-v0.1.0...auto-seek-v0.2.0) (2026-11-08)
 
 
