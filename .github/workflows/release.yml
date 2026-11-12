@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     branches: [main]
+  # Run it again by hand if a push's run never started: release-please picks up
+  # a merged release PR that has no release yet.
+  workflow_dispatch:
 
 permissions:
   contents: write
