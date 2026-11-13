@@ -45,7 +45,7 @@ settings:
     type: BOOLEAN
   hideScanChart:
     displayName: Hide the scan chart
-    description: Above the seek bar, Auto Seek shows the frames it scored (amber once the action has started) and the start it picked; tap a frame to jump there. Turn this on to hide it.
+    description: Above the seek bar, Auto Seek shows the frames it scored (amber once the action has started) and the start it picked; tap a frame to play from there. Turn this on to hide it.
     type: BOOLEAN
   disableNewScenes:
     displayName: Don't analyse new scenes

@@ -465,8 +465,8 @@
     bars.addEventListener("pointermove", show);
     bars.addEventListener("pointerdown", show);
     bars.addEventListener("pointerleave", () => { peek.hidden = true; });
-    // Letting go on a bar jumps to that frame; sliding off the strip first
-    // only looks.
+    // Letting go on a bar plays from that frame, as Skip intro does; sliding
+    // off the strip first only looks.
     bars.addEventListener("pointerup", (event) => {
       const bar = barAt(event);
       if (!bar || current !== view) return;
@@ -474,6 +474,7 @@
       peek.hidden = true;
       seekPlayer(view, Number(bar.dataset.time));
       view.userSeeked = true;
+      if (view.video.paused) playVideo(view).catch(() => {});
     });
     bars.addEventListener("click", (event) => event.stopPropagation());
   }
