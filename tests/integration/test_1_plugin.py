@@ -14,7 +14,7 @@ def test_stash_lists_the_plugin_with_its_task_hook_and_settings(gql) -> None:
     assert [task["name"] for task in plugin["tasks"]] == ["Find start points"]
     assert plugin["hooks"] == [{"hooks": ["Scene.Create.Post"]}]
     assert {s["name"] for s in plugin["settings"]} == {
-        "autoSkip", "leadIn", "hideScanChart", "disableNewScenes", "threads", "disableDownload"
+        "autoSkip", "leadIn", "hideSkipButton", "hideScanChart", "disableNewScenes", "threads", "disableDownload"
     }  # fmt: skip
 
 

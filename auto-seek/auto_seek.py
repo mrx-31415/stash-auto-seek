@@ -498,6 +498,75 @@ def cache() -> sqlite3.Connection:
     return connection
 
 
+ADOPTED_PATH = os.path.join(DATA_DIR, "adopted.json")
+
+
+def earlier_caches() -> list[str]:
+    """Caches left by Auto Seek installed from another plugin source.
+
+    Stash installs a package into <plugins>/<source folder>/<id>, and
+    uninstalling deletes only the files the package shipped, so an earlier
+    install's data/ stays behind next to this one."""
+    own = os.path.realpath(CACHE_PATH)
+    parent = os.path.dirname(PLUGIN_DIR)
+    found = set()
+    for root in {parent, os.path.dirname(parent)}:
+        for pattern in ("auto-seek", os.path.join("*", "auto-seek")):
+            for path in glob.glob(os.path.join(root, pattern, "data", "cache.sqlite3")):
+                if os.path.realpath(path) != own:
+                    found.add(os.path.realpath(path))
+    return sorted(found, key=os.path.getmtime)
+
+
+def adopt_earlier_install() -> None:
+    """Once per install: bring over the start points and marks of an earlier
+    install from another source, so switching sources keeps them. What this
+    install already has wins, except a newer mark."""
+    if os.path.exists(ADOPTED_PATH):
+        return
+    adopted = []
+    for path in earlier_caches():
+        try:
+            with contextlib.closing(cache()) as connection:
+                connection.execute("ATTACH DATABASE ? AS earlier", (path,))
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM earlier.sqlite_master WHERE type = 'table'"
+                    )
+                }
+                with connection:
+                    if "start_point" in tables:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO start_point "
+                            "(scene_id, start_s, duration_s, model, scores, computed_at) "
+                            "SELECT scene_id, start_s, duration_s, model, scores, computed_at "
+                            "FROM earlier.start_point"
+                        )
+                    if "user_start" in tables:
+                        connection.execute(
+                            "INSERT INTO user_start (scene_id, start_s, duration_s, "
+                            "computed_start_s, computed_model, marked_at) "
+                            "SELECT scene_id, start_s, duration_s, computed_start_s, "
+                            "computed_model, marked_at FROM earlier.user_start WHERE true "
+                            "ON CONFLICT(scene_id) DO UPDATE SET start_s = excluded.start_s, "
+                            "duration_s = excluded.duration_s, "
+                            "computed_start_s = excluded.computed_start_s, "
+                            "computed_model = excluded.computed_model, "
+                            "marked_at = excluded.marked_at "
+                            "WHERE excluded.marked_at > user_start.marked_at"
+                        )
+            adopted.append(path)
+        except sqlite3.Error as error:
+            sys.stderr.write(f"\x01w\x02Auto Seek couldn't read an earlier cache {path}: {error}\n")
+    write_json(ADOPTED_PATH, {"from": adopted, "at": now()})
+    if adopted:
+        sys.stderr.write(
+            f"\x01i\x02Auto Seek kept the start points and marks of an earlier install: "
+            f"{', '.join(adopted)}\n"
+        )
+
+
 def chart(scores: str) -> dict:
     """The frames behind a start point, for the player's chart: [time, score]
     pairs and the threshold they were judged against. Results saved before
@@ -1327,6 +1396,10 @@ def main() -> None:
     if len(sys.argv) > 2 and sys.argv[2] == "worker":
         worker()
         return
+    try:
+        adopt_earlier_install()
+    except (OSError, sqlite3.Error) as error:
+        sys.stderr.write(f"\x01w\x02Auto Seek couldn't check for an earlier install: {error}\n")
     try:
         request = json.loads(sys.stdin.read() or "{}")
         args = request.get("args") or {}

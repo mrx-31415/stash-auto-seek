@@ -202,7 +202,9 @@
     // The pill only offers itself while there is still an intro to skip, or
     // while it is holding playback for the start point.
     const before = view.target == null ? view.video.currentTime < 120 : view.video.currentTime < view.target - 2;
-    const show = view.holding || view.needsTap || (view.state !== "error" && !view.dismissed && before);
+    // Hidden by the setting, it still appears while it holds playback for an
+    // automatic skip, since only it can say so.
+    const show = view.holding || view.needsTap || (!view.hideButton && view.state !== "error" && !view.dismissed && before);
     view.pill.hidden = !show;
     // While the server works the start out the pill shimmers; once it shows
     // its arrow, a tap jumps straight there.
@@ -427,14 +429,18 @@
     const peek = strip.querySelector(".auto-seek-strip-peek");
     const image = peek.querySelector(".auto-seek-strip-peek-image");
     const text = peek.querySelector(".auto-seek-strip-peek-text");
-    const show = async (event) => {
-      const box = bars.getBoundingClientRect();
+    const barAt = (event) => {
       let nearest = null;
       let distance = 10; // px: a bar is only a few pixels wide
       for (const bar of bars.querySelectorAll("i")) {
         const x = bar.getBoundingClientRect().left + bar.offsetWidth / 2;
         if (Math.abs(x - event.clientX) < distance) { nearest = bar; distance = Math.abs(x - event.clientX); }
       }
+      return nearest;
+    };
+    const show = async (event) => {
+      const box = bars.getBoundingClientRect();
+      const nearest = barAt(event);
       if (!nearest) { peek.hidden = true; return; }
       const time = Number(nearest.dataset.time);
       const score = Number(nearest.dataset.score);
@@ -459,6 +465,17 @@
     bars.addEventListener("pointermove", show);
     bars.addEventListener("pointerdown", show);
     bars.addEventListener("pointerleave", () => { peek.hidden = true; });
+    // Letting go on a bar jumps to that frame; sliding off the strip first
+    // only looks.
+    bars.addEventListener("pointerup", (event) => {
+      const bar = barAt(event);
+      if (!bar || current !== view) return;
+      event.stopPropagation();
+      peek.hidden = true;
+      seekPlayer(view, Number(bar.dataset.time));
+      view.userSeeked = true;
+    });
+    bars.addEventListener("click", (event) => event.stopPropagation());
   }
 
   function labelStrip(view, text) {
@@ -655,6 +672,11 @@
     video.closest(".video-js").appendChild(pill);
     const view = { id, video, button, marker, pill, state: "busy", target: null, error: null, promise: null, autoDone: false, ourSeek: false, userSeeked: false, holding: false, needsTap: false, dismissed: false };
     current = view;
+    settings().then(({ plugin }) => {
+      view.hideButton = plugin.hideSkipButton === true;
+      button.style.display = view.hideButton ? "none" : "";
+      render();
+    });
     button.addEventListener("click", onSkip);
     marker.addEventListener("click", (event) => { event.stopPropagation(); markStart(view); });
     pill.addEventListener("click", onSkip);

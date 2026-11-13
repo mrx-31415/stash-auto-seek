@@ -62,6 +62,16 @@ def test_lead_in_setting_moves_the_jump(page, base_url, marked, configure, error
     assert errors == []
 
 
+def test_hide_skip_button_setting(page, base_url, marked, configure, errors) -> None:
+    configure(hideSkipButton=True)
+    open_scene(page, base_url, marked)
+    expect(page.locator(".auto-seek-mark")).to_be_visible()  # the flag stays
+    expect(page.locator(".auto-seek-button")).to_be_hidden()
+    page.wait_for_timeout(1000)
+    expect(page.locator(".auto-seek-pill")).to_be_hidden()
+    assert errors == []
+
+
 def test_the_flag_marks_the_start_for_good(page, base_url, scene, operation, errors) -> None:
     try:
         open_scene(page, base_url, scene)

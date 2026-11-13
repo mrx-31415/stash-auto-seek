@@ -53,6 +53,25 @@ def test_the_player_offers_the_found_start(ready, page, base_url, scene, operati
     assert errors == []
 
 
+def test_tapping_a_frame_on_the_chart_jumps_there(ready, page, base_url, scene, operation, errors) -> None:
+    samples = operation(op="analyse", scene_id=scene["id"])["samples"]
+    open_scene(page, base_url, scene)
+    page.locator(".video-js video").evaluate("video => { video.muted = true; }")
+    bars = page.locator(".auto-seek-strip-bars i")
+    expect(bars.first).to_be_attached(timeout=30_000)
+    bar = bars.nth(bars.count() // 2)
+    time_ = float(bar.get_attribute("data-time"))
+    assert any(abs(t - time_) < 0.01 for t, _ in samples)
+    # A real click on the strip, at the bar (the bars themselves are a few pixels wide).
+    strip = page.locator(".auto-seek-strip-bars").bounding_box()
+    x = bar.evaluate("bar => bar.getBoundingClientRect().left + bar.offsetWidth / 2")
+    page.mouse.click(x, strip["y"] + strip["height"] / 2)
+    expect(page.locator(".auto-seek-toast").first).to_contain_text("Skipped to")
+    current = page.locator(".video-js video").evaluate("video => video.currentTime")
+    assert current == pytest.approx(time_, abs=1)
+    assert errors == []
+
+
 def test_the_library_task_finishes(ready, gql, operation, scene) -> None:
     job = gql('mutation { runPluginTask(plugin_id: "auto-seek", task_name: "Find start points") }')[
         "runPluginTask"
