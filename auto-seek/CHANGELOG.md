@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.2.1...auto-seek-v0.3.0) (2026-11-13)
+
+
+### Features
+
+* jump from the scan chart, hide the Skip intro button, keep data when switching sources ([#6](https://github.com/mrx-31415/stash-auto-seek/issues/6)) ([fe42192](https://github.com/mrx-31415/stash-auto-seek/commit/fe42192b095dc690ed31d35915c3ff3f1e889184))
+
+
+### Bug Fixes
+
+* play from the frame tapped on the scan chart ([#9](https://github.com/mrx-31415/stash-auto-seek/issues/9)) ([095a00e](https://github.com/mrx-31415/stash-auto-seek/commit/095a00e99b183229f4ca1c12262d967251a920b6))
+
 ## [0.2.1](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.2.0...auto-seek-v0.2.1) (2026-11-11)
 
 
