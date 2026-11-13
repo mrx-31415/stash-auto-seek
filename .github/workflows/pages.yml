@@ -22,6 +22,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}dev/index.yml
     runs-on: ubuntu-latest
+    env:
+      HUB_TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,3 +39,10 @@ jobs:
           path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
+      # The plugin hub (mrx-31415/stash-plugins) mirrors this dev source; tell
+      # it now instead of waiting for its schedule, which GitHub runs late.
+      - name: Tell the plugin hub
+        if: env.HUB_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.HUB_TOKEN }}
+        run: gh api repos/mrx-31415/stash-plugins/dispatches -f event_type=plugin-released
