@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.3.0...auto-seek-v0.3.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* don't skip when no frame looks started ([#10](https://github.com/mrx-31415/stash-auto-seek/issues/10)) ([b5bf724](https://github.com/mrx-31415/stash-auto-seek/commit/b5bf7243848aa5312b8cfff154a933980d3ce7f5))
+
 ## [0.3.0](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.2.1...auto-seek-v0.3.0) (2026-11-13)
 
 
