@@ -978,6 +978,11 @@ def search(
                 high_i = middle - 1
             else:
                 low_i = middle + 1
+    # No frame anywhere looked started: there is no start to skip to. Falling
+    # back to the end of the window jumped to near the end of the scene, and
+    # this happens most when the action runs from the first frame.
+    if not found and all(score < rule["threshold"] for _, score in seen):
+        start = plan[0] if plan else 0.0
     return start, seen
 
 
