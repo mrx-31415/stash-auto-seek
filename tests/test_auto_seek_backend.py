@@ -296,6 +296,20 @@ def test_frames_are_cut_as_raw_model_input(backend, tmp_path):
     assert backend.blank(bytes(224 * 224 * 3)) and backend.blank(b"\x80" * (224 * 224 * 3))
 
 
+def test_search_without_a_confident_frame_does_not_skip(backend):
+    # The model never sure the action started (e.g. it runs from the first
+    # frame, at an angle it is unsure of): stay at the start, not near the end.
+    config = {"previewSegments": 12}
+    for score in (0.6, 0.3):
+        start, seen = backend.search(lambda times, s=score: [s] * len(times), 1800, config)
+        assert start == 0 and seen
+    config = {"previewSegments": 12, "previewExcludeStart": "30"}
+    assert backend.search(lambda times: [0.5] * len(times), 1800, config)[0] == 30
+    # A sure start is still found as before.
+    hit = backend.search(lambda times: [0.9 if t >= 600 else 0.1 for t in times], 1800, config)[0]
+    assert hit == pytest.approx(600, abs=10)
+
+
 def test_search_helpers(backend):
     rule = backend.RULE
     assert backend.parse_exclude("5%", 200) == 10 and backend.parse_exclude("12", 200) == 12
