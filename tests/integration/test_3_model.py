@@ -69,6 +69,8 @@ def test_tapping_a_frame_on_the_chart_jumps_there(ready, page, base_url, scene, 
     expect(page.locator(".auto-seek-toast").first).to_contain_text("Skipped to")
     current = page.locator(".video-js video").evaluate("video => video.currentTime")
     assert current == pytest.approx(time_, abs=1)
+    # It plays from there, as Skip intro does.
+    page.wait_for_function("() => !document.querySelector('.video-js video').paused")
     assert errors == []
 
 
