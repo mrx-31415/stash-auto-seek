@@ -23,6 +23,11 @@ Auto Seek needs Stash v0.31 and the `python` Stash already uses for plugins. Ins
 from the Stash Curator source
 (`https://mrx-31415.github.io/stash-curator/index.yml`) keep receiving updates there.
 
+**Moving from the Stash Curator source:** uninstall Auto Seek there and install it from
+the source above, in either order. Uninstalling leaves Auto Seek's data folder behind,
+and the new install picks up its start points and your marks the first time it runs.
+Don't delete the old plugin folder by hand before that.
+
 Development builds from `main`: `https://mrx-31415.github.io/stash-auto-seek/dev/index.yml`.
 
 ## Development

@@ -39,9 +39,13 @@ settings:
     displayName: Lead-in (seconds)
     description: Jump this many seconds before the detected start, for a smoother way in. Default 3.
     type: NUMBER
+  hideSkipButton:
+    displayName: Hide the Skip intro button
+    description: Hides the Skip intro button on the picture and in the control bar. The scan chart still jumps to any frame you tap, and Skip automatically still works.
+    type: BOOLEAN
   hideScanChart:
     displayName: Hide the scan chart
-    description: Above the seek bar, Auto Seek shows the frames it scored (amber once the action has started) and the start it picked. Turn this on to hide it.
+    description: Above the seek bar, Auto Seek shows the frames it scored (amber once the action has started) and the start it picked; tap a frame to jump there. Turn this on to hide it.
     type: BOOLEAN
   disableNewScenes:
     displayName: Don't analyse new scenes

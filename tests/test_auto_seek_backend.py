@@ -225,6 +225,50 @@ def test_cache_from_version_1_gains_the_marks_table(backend):
     assert backend.get_points({"scene_ids": ["7"]})["7"]["model"] == "user"
 
 
+def load_backend(plugin_dir, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["auto_seek.py", str(plugin_dir)])
+    spec = importlib.util.spec_from_file_location("auto_seek_install", BACKEND)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_switching_plugin_source_keeps_start_points_and_marks(tmp_path, monkeypatch):
+    # Stash installs into <plugins>/<source folder>/auto-seek; uninstalling leaves data/.
+    old = load_backend(tmp_path / "plugins" / "curator" / "auto-seek", monkeypatch)
+    old.put_point({"scene_id": 7, "start": 300, "duration": 1800, "model": "m1"})
+    old.put_point({"scene_id": 8, "start": 100, "duration": 900, "model": "m1"})
+    old.mark_point({"scene_id": 7, "start": 284, "duration": 1800})
+    old.mark_point({"scene_id": 9, "start": 50, "duration": 600})
+
+    new = load_backend(tmp_path / "plugins" / "hub" / "auto-seek", monkeypatch)
+    # The new install had already analysed scene 8 itself: its own result stays.
+    new.put_point({"scene_id": 8, "start": 120, "duration": 900, "model": "m2"})
+    new.adopt_earlier_install()
+    points = new.get_points({"scene_ids": ["7", "8", "9"]})
+    assert (points["7"]["start"], points["7"]["model"]) == (284, "user")
+    assert (points["8"]["start"], points["8"]["model"]) == (120, "m2")
+    assert points["9"]["start"] == 50
+    # Once only: later changes in the old folder aren't pulled in again.
+    old.mark_point({"scene_id": 8, "start": 10, "duration": 900})
+    new.adopt_earlier_install()
+    assert new.get_points({"scene_ids": ["8"]})["8"]["model"] == "m2"
+
+
+def test_a_source_without_a_folder_finds_the_earlier_install_too(tmp_path, monkeypatch):
+    old = load_backend(tmp_path / "plugins" / "curator" / "auto-seek", monkeypatch)
+    old.mark_point({"scene_id": 7, "start": 284, "duration": 1800})
+    new = load_backend(tmp_path / "plugins" / "auto-seek", monkeypatch)
+    new.adopt_earlier_install()
+    assert new.get_points({"scene_ids": ["7"]})["7"]["start"] == 284
+
+
+def test_a_fresh_install_with_nothing_to_adopt(backend):
+    backend.adopt_earlier_install()
+    assert backend.get_points({"scene_ids": ["7"]}) == {}
+    assert os.path.exists(backend.ADOPTED_PATH)
+
+
 def test_raw_interface_replies_with_output_or_error(backend, monkeypatch, capsys):
     for request, key in (
         ({"args": {"op": "status"}}, "output"),
