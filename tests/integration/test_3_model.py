@@ -4,6 +4,7 @@ server, and show the result on the player. The first run downloads about
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -59,13 +60,23 @@ def test_tapping_a_frame_on_the_chart_jumps_there(ready, page, base_url, scene, 
     page.locator(".video-js video").evaluate("video => { video.muted = true; }")
     bars = page.locator(".auto-seek-strip-bars i")
     expect(bars.first).to_be_attached(timeout=30_000)
-    bar = bars.nth(bars.count() // 2)
+    # Let the chart finish drawing (it sweeps while busy).
+    expect(page.locator(".auto-seek-strip")).not_to_have_class(
+        re.compile(r"\bis-busy\b"), timeout=30_000
+    )
+    bar = bars.nth(bars.count() * 3 // 4)  # clear of the label on the left
     time_ = float(bar.get_attribute("data-time"))
     assert any(abs(t - time_) < 0.01 for t, _ in samples)
     # A real click on the strip, at the bar (the bars themselves are a few pixels wide).
     strip = page.locator(".auto-seek-strip-bars").bounding_box()
     x = bar.evaluate("bar => bar.getBoundingClientRect().left + bar.offsetWidth / 2")
-    page.mouse.click(x, strip["y"] + strip["height"] / 2)
+    y = strip["y"] + strip["height"] / 2
+    under = page.evaluate(
+        "([x, y]) => document.elementFromPoint(x, y)?.closest('.auto-seek-strip-bars') != null",
+        [x, y],
+    )
+    assert under, "something covers the chart at the bar"
+    page.mouse.click(x, y)
     expect(page.locator(".auto-seek-toast").first).to_contain_text("Skipped to")
     current = page.locator(".video-js video").evaluate("video => video.currentTime")
     assert current == pytest.approx(time_, abs=1)
