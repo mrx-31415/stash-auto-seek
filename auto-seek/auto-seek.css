@@ -339,3 +339,134 @@
     animation: none;
   }
 }
+
+/* Settings → Plugins → Auto Seek: the Start at dropdown, the act grid and
+   the model dropdown, in Stash's own setting rows. */
+.auto-seek-settings .auto-seek-select {
+  min-width: 16rem;
+  max-width: 22rem;
+  text-align: left;
+}
+
+.react-select__menu .auto-seek-option {
+  text-align: left;
+}
+
+.auto-seek-option-note {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: normal;
+}
+
+.auto-seek-badge {
+  margin-left: 0.5em;
+  padding: 0.05em 0.45em;
+  border: 1px solid #f0ad4e;
+  border-radius: 0.6em;
+  color: #f0ad4e;
+  font-size: 0.7rem;
+  vertical-align: 0.1em;
+}
+
+/* Lined up with Stash's setting rows in a plugin's group. */
+.auto-seek-acts {
+  margin: 0 1.5rem 0 2.5rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #000;
+}
+
+.auto-seek-acts-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.auto-seek-acts .auto-seek-search {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+}
+
+.auto-seek-count {
+  opacity: 0.7;
+  font-size: 0.875rem;
+}
+
+.auto-seek-note {
+  margin-bottom: 0.75rem;
+  color: #f0ad4e;
+  font-size: 0.875rem;
+}
+
+.auto-seek-empty {
+  opacity: 0.7;
+}
+
+.auto-seek-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.auto-seek-group-name {
+  flex: 0 0 7rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auto-seek-group-name:hover {
+  text-decoration: underline;
+}
+
+.auto-seek-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.auto-seek-chip {
+  padding: 0.2rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 1rem;
+  background: transparent;
+  color: inherit;
+  font-size: 0.875rem;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.auto-seek-chip:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  opacity: 1;
+}
+
+.auto-seek-chip.is-on {
+  border-color: #137cbd;
+  background: #137cbd;
+  color: #fff;
+  opacity: 1;
+}
+
+@media (max-width: 576px) {
+  .auto-seek-group {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .auto-seek-group-name {
+    flex-basis: auto;
+  }
+
+  .auto-seek-settings .auto-seek-select {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+}

@@ -39,6 +39,118 @@
     return cues.find((cue) => time >= cue.start && time < cue.end) || cues[cues.length - 1] || null;
   }
 
+  // The model's acts as the settings page shows them: [backend name, label,
+  // other words a search finds it by]. The backend's names (auto_seek.py
+  // ACTS) stay as they are; tests/test_settings_page.py keeps the two in step.
+  const ACT_GROUPS = [
+    { name: "Tease", acts: [["striptease / tease", "Striptease / tease", "strip show dance pose"]] },
+    {
+      name: "Foreplay",
+      acts: [
+        ["kissing", "Kissing", "kiss making out"],
+        ["massage / oil", "Massage / oil", "oiled rub"],
+        ["breast worship", "Breast worship", "boobs tits nipples"],
+        ["ass worship", "Ass worship", "butt"],
+        ["foot play", "Foot play", "feet footjob"],
+      ],
+    },
+    { name: "Masturbation", acts: [["masturbation / toys", "Masturbation / toys", "solo dildo vibrator toy"]] },
+    {
+      name: "Oral",
+      acts: [
+        ["oral on him", "Blowjob", "bj oral on him suck deepthroat"],
+        ["oral on her", "Eating pussy", "cunnilingus oral on her lick"],
+        ["69", "69", "sixty-nine sixty nine"],
+        ["rimming", "Rimming", "anilingus rimjob"],
+      ],
+    },
+    {
+      name: "Hands",
+      acts: [
+        ["handjob", "Handjob", "hj hand"],
+        ["fingering", "Fingering", "finger"],
+        ["titjob", "Titjob", "titfuck boobjob"],
+      ],
+    },
+    {
+      name: "Sex",
+      acts: [
+        ["cowgirl", "Cowgirl", "riding reverse cowgirl"],
+        ["missionary", "Missionary", ""],
+        ["doggy style", "Doggy style", "doggystyle from behind"],
+        ["prone bone", "Prone bone", "lying flat"],
+        ["side/spoon", "Spooning", "side spoon"],
+        ["ballerina", "Ballerina", "standing leg up"],
+        ["stand & carry", "Stand & carry", "standing lift and carry"],
+        ["pile driving", "Pile driver", "piledriver pile driving"],
+        ["scissoring", "Scissoring", "tribbing lesbian"],
+      ],
+    },
+    {
+      name: "Finish",
+      acts: [
+        ["facial", "Facial", "cum face cumshot"],
+        ["in mouth", "Cum in mouth", "cum swallow"],
+        ["on body", "Cum on body", "cumshot bodyshot cum"],
+        ["creampie", "Creampie", "cum inside"],
+      ],
+    },
+  ];
+  const ALL_ACTS = ACT_GROUPS.flatMap((group) => group.acts.map(([name]) => name));
+  const groupActs = (...names) => ACT_GROUPS.filter((group) => names.includes(group.name)).flatMap((group) => group.acts.map(([name]) => name));
+  const LATER_ACTS = groupActs("Oral", "Hands", "Sex", "Finish");
+  const FOREPLAY_ACTS = groupActs("Foreplay", "Masturbation").filter((name) => name !== "foot play");
+  // The backend's stages (auto_seek.py STAGES), most useful first.
+  const PRESETS = [
+    { key: "oral", label: "Oral, hands or sex", note: "The default. Kissing, tease and other foreplay don't count yet.", acts: LATER_ACTS },
+    { key: "kissing", label: "Kissing or later", note: "Kissing counts too; other foreplay and tease don't.", acts: ["kissing", ...LATER_ACTS] },
+    { key: "sex", label: "Sex positions only", note: "Skips oral and hands as well.", acts: groupActs("Sex") },
+    { key: "foreplay", label: "Foreplay or later", note: "Massage, worship, masturbation and kissing count; tease doesn't.", experimental: true, acts: [...FOREPLAY_ACTS, ...LATER_ACTS] },
+    { key: "anything", label: "Anything, tease included", note: "Even a striptease counts as the start.", experimental: true, acts: ["striptease / tease", ...FOREPLAY_ACTS, ...LATER_ACTS] },
+  ];
+  const DEFAULT_PRESET = "oral";
+
+  const sameActs = (a, b) => a.length === b.length && a.every((name) => b.includes(name));
+
+  // The Start at setting as the backend reads it (auto_seek.py stage_of): a
+  // stage's name, written leniently, or "acts: a, b" for a pick of acts.
+  // Returns the preset it matches (null for a pick of its own) and its acts.
+  function readStart(value) {
+    const text = String(value || "").trim().toLowerCase();
+    if (text.startsWith("acts:")) {
+      const names = text.slice(5).split(",").map((name) => name.trim());
+      const acts = ALL_ACTS.filter((name) => names.includes(name));
+      if (acts.length) {
+        const preset = PRESETS.find((candidate) => sameActs(candidate.acts, acts));
+        return { preset: preset ? preset.key : null, acts: preset ? preset.acts : acts };
+      }
+    } else {
+      const words = text.split(/\s+/);
+      for (const key of ["anything", "foreplay", "kissing", "oral", "sex", "position"]) {
+        if (text.startsWith(key) || words.includes(key)) {
+          const preset = PRESETS.find((candidate) => candidate.key === (key === "position" ? "sex" : key));
+          return { preset: preset.key, acts: preset.acts };
+        }
+      }
+    }
+    const preset = PRESETS.find((candidate) => candidate.key === DEFAULT_PRESET);
+    return { preset: preset.key, acts: preset.acts };
+  }
+
+  // What to save for a set of acts: a stage's name when it matches one.
+  function writeStart(acts) {
+    const preset = PRESETS.find((candidate) => sameActs(candidate.acts, acts));
+    return preset ? preset.key : `acts: ${ALL_ACTS.filter((name) => acts.includes(name)).join(", ")}`;
+  }
+
+  // Search: every word typed starts a word of the act's label, name, other
+  // words or group ("cum", "dog", "oral"; "bj" isn't found in "boobjob").
+  function actMatches(act, group, query) {
+    const words = `${act[1]} ${act[0]} ${act[2]} ${group}`.toLowerCase().split(/[\s/&-]+/);
+    return String(query || "").toLowerCase().split(/\s+/).filter(Boolean)
+      .every((typed) => words.some((word) => word.startsWith(typed)));
+  }
+
   // ── end pure helpers ───────────────────────────────────────────────────
 
   async function graphql(query, variables) {
@@ -744,6 +856,145 @@
     observer.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => { observer?.disconnect(); observer = null; }, 30000);
   }
+
+  // ── settings page ──────────────────────────────────────────────────────
+
+  // Auto Seek's group under Settings → Plugins: the start and the model get
+  // a dropdown and a searchable grid of acts in place of the plain text and
+  // on/off fields; the other settings stay Stash's own.
+  const OWN_SETTINGS = new Set(["startStage", "accurateModel"]);
+  const MODEL_OPTIONS = [
+    { value: "fast", label: "Fast (ViT-B/32)", note: "The default. About 0.15 s a frame on two CPU threads." },
+    { value: "accurate", label: "Accurate (ViT-B/16)", note: "Finds starts a little more accurately, about four times as slowly (0.6 s a frame). Downloads in place of the fast model." },
+  ];
+
+  function StartSettings({ pluginID }) {
+    const { React, libraries } = window.PluginApi;
+    const h = React.createElement;
+    const Select = libraries.ReactSelect.default;
+    const { plugins, savePluginSettings } = window.PluginApi.hooks.useSettings();
+    const values = plugins?.[pluginID] || {};
+    const [query, setQuery] = React.useState("");
+    const start = readStart(values.startStage);
+    const preset = PRESETS.find((candidate) => candidate.key === start.preset);
+
+    function save(change) {
+      savePluginSettings(pluginID, { ...values, ...change });
+      known.clear(); // starts this tab remembered may be for the old choice
+    }
+    const saveActs = (acts) => save({ startStage: writeStart(acts) });
+    function toggle(name) {
+      const on = start.acts.includes(name);
+      if (on && start.acts.length === 1) return; // something has to count
+      saveActs(on ? start.acts.filter((act) => act !== name) : [...start.acts, name]);
+    }
+
+    const optionLabel = (option, { context }) => context === "value"
+      ? option.label
+      : h("div", { className: "auto-seek-option" },
+        h("div", null, option.label, option.experimental ? h("span", { className: "auto-seek-badge" }, "Experimental") : null),
+        option.note ? h("div", { className: "auto-seek-option-note" }, option.note) : null);
+    const selectProps = {
+      classNamePrefix: "react-select",
+      className: "auto-seek-select",
+      menuPortalTarget: document.body,
+      formatOptionLabel: optionLabel,
+      components: { IndicatorSeparator: () => null },
+    };
+    const startOptions = PRESETS.map((candidate) => ({ value: candidate.key, ...candidate }));
+    const ownPick = { value: "", label: `Your own pick · ${start.acts.length} ${start.acts.length === 1 ? "act" : "acts"}`, note: "Tap acts below to change it.", experimental: true };
+    if (!preset) startOptions.push(ownPick);
+
+    const groups = ACT_GROUPS.map((group) => ({ ...group, shown: group.acts.filter((act) => actMatches(act, group.name, query)) }))
+      .filter((group) => group.shown.length);
+    const shown = groups.flatMap((group) => group.shown);
+    const note = preset
+      ? (preset.experimental ? "Experimental: foreplay and tease are the hardest to tell apart from an intro." : null)
+      : "Experimental: the start is the first frame that shows one of your acts. Short or rare acts (69, titjob, fingering, tease) are found less reliably.";
+
+    return h("div", { className: "auto-seek-settings" },
+      h("div", { className: "setting auto-seek-start" },
+        h("div", null,
+          h("h3", null, "Start at"),
+          h("div", { className: "sub-heading" },
+            "Auto Seek skips to the first moment that shows one of the highlighted acts. Pick a stage, or tap acts to make your own pick. Changing it works out start points again; starts you marked stay.")),
+        h("div", null, h(Select, {
+          ...selectProps,
+          inputId: "auto-seek-start-select",
+          options: startOptions,
+          value: preset ? startOptions.find((option) => option.value === preset.key) : ownPick,
+          onChange: (option) => option?.value && save({ startStage: option.value }),
+        }))),
+      h("div", { className: "auto-seek-acts" },
+        h("div", { className: "auto-seek-acts-bar" },
+          h("input", {
+            type: "search",
+            className: "form-control auto-seek-search",
+            placeholder: "Search acts: doggy, cum, kissing…",
+            "aria-label": "Search acts",
+            value: query,
+            onChange: (event) => setQuery(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === "Enter" && shown.length === 1) { event.preventDefault(); toggle(shown[0][0]); }
+              if (event.key === "Escape") setQuery("");
+            },
+          }),
+          h("span", { className: "auto-seek-count" }, `${start.acts.length} of ${ALL_ACTS.length} acts count`)),
+        note ? h("div", { className: "auto-seek-note" }, note) : null,
+        groups.length ? null : h("div", { className: "auto-seek-empty" }, `No act matches “${query}”.`),
+        ...groups.map((group) => {
+          const names = group.acts.map(([name]) => name);
+          const all = names.every((name) => start.acts.includes(name));
+          return h("div", { className: "auto-seek-group", key: group.name },
+            h("button", {
+              type: "button",
+              className: "auto-seek-group-name",
+              title: all ? `Don't count ${group.name.toLowerCase()}` : `Count all ${group.name.toLowerCase()}`,
+              onClick: () => {
+                const rest = start.acts.filter((name) => !names.includes(name));
+                if (!all) saveActs([...rest, ...names]);
+                else if (rest.length) saveActs(rest);
+              },
+            }, group.name),
+            h("div", { className: "auto-seek-chips" }, ...group.shown.map(([name, label]) => {
+              const on = start.acts.includes(name);
+              return h("button", {
+                type: "button",
+                key: name,
+                className: `auto-seek-chip${on ? " is-on" : ""}`,
+                "aria-pressed": on,
+                title: on && start.acts.length === 1 ? "At least one act has to count" : undefined,
+                onClick: () => toggle(name),
+              }, label);
+            })));
+        })),
+      h("div", { className: "setting auto-seek-model" },
+        h("div", null,
+          h("h3", null, "Model"),
+          h("div", { className: "sub-heading" }, "Only the chosen model is downloaded (about 90 MB). Changing it works out start points again.")),
+        h("div", null, h(Select, {
+          ...selectProps,
+          inputId: "auto-seek-model-select",
+          isSearchable: false,
+          options: MODEL_OPTIONS,
+          value: MODEL_OPTIONS[values.accurateModel === true ? 1 : 0],
+          onChange: (option) => option && save({ accurateModel: option.value === "accurate" }),
+        }))));
+  }
+
+  // Stash's PluginSettings (v0.27+): Auto Seek's own panel, then Stash's
+  // fields for the remaining settings. Other plugins' settings, extra
+  // arguments and other patches pass through untouched.
+  window.PluginApi?.patch?.instead?.("PluginSettings", function (...args) {
+    const next = args.pop();
+    const [props, ...rest] = args;
+    if (props?.pluginID !== PLUGIN_ID || !window.PluginApi.hooks?.useSettings || !window.PluginApi.libraries?.ReactSelect) {
+      return next.apply(this, args);
+    }
+    const { React } = window.PluginApi;
+    const native = next.apply(this, [{ ...props, settings: (props.settings || []).filter((setting) => !OWN_SETTINGS.has(setting.name)) }, ...rest]);
+    return React.createElement(React.Fragment, null, React.createElement(StartSettings, { pluginID: props.pluginID }), native);
+  });
 
   window.PluginApi?.Event?.addEventListener("stash:location", (event) => onLocation(event.detail.data.location.pathname));
   onLocation(location.pathname);

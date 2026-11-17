@@ -730,6 +730,15 @@ def test_start_stage_and_model_settings(backend):
     assert backend.stage_of({"startStage": "positions"}) == "sex"
     assert backend.stage_of({"startStage": "anything"}) == "anything"
     assert backend.stage_of({"startStage": "nonsense"}) == "oral"
+    # The settings page's own pick of acts: unknown names drop out, and a
+    # pick that equals a stage is that stage (its cached starts stand).
+    picked = backend.stage_of({"startStage": "acts: Cowgirl, kissing, made up"})
+    assert picked == "acts:1-14"
+    assert backend.stage_acts(picked) == ("kissing", "cowgirl")
+    positions = ", ".join(reversed(backend.POSITIONS))
+    assert backend.stage_of({"startStage": f"acts: {positions}"}) == "sex"
+    assert backend.stage_of({"startStage": "acts: nothing yet"}) == "oral"
+    assert backend.model_id("fast", picked) != backend.model_id("fast", "acts:1")
     assert backend.size_of({"accurateModel": True}) == "accurate"
     # Every stage and size caches under its own id, so a change recomputes.
     ids = {backend.model_id(size, stage) for size in backend.MODELS for stage in backend.STAGES}
@@ -740,6 +749,7 @@ def test_start_stage_and_model_settings(backend):
     acts[backend.ACTS.index("cowgirl")] = 0.5
     assert backend.stage_score(acts, "sex") == 0.5
     assert backend.stage_score(acts, "kissing") == 0.75
+    assert backend.stage_score(acts, "acts:14") == 0.5
     # Choosing the other size switches the download to that model only.
     backend.choose("accurate")
     assert backend.chosen_size() == "accurate"
