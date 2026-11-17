@@ -60,20 +60,90 @@ VERIFIED_PATH = os.path.join(DATA_DIR, "verified.json")
 CACHE_PATH = os.path.join(DATA_DIR, "cache.sqlite3")
 WORKER_LOCK_PATH = os.path.join(DATA_DIR, "worker.lock")
 
-# The model: CLIP ViT-B/32 (LAION-2B) with its last three blocks tuned on
-# start points and acts, int8 weights, raw RGB bytes in. Pinned to a commit of
-# https://huggingface.co/mrx-31415/auto-seek.
-MODEL = {
-    "path": "models/auto-seek-clip3-v2.onnx",
-    "url": "https://huggingface.co/mrx-31415/auto-seek/resolve/"
-    "d7aa38548cc784211c5d0578d3fc3249b368e512/auto-seek-clip3-v2.onnx",
-    "sha256": "683e3cb6c65f197ff78bc3c3da45e365682c32d5e7c739497b08aa2205654ca0",
-    "size": 88661597,
+# The models: CLIP (LAION-2B) with its last three blocks tuned to tell which
+# acts a frame shows, int8 weights, raw RGB bytes in. Two sizes: ViT-B/32 is
+# quicker, ViT-B/16 looks at four times the patches and finds starts a little
+# more accurately. Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
+HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/8fdb176bd763c498f6a695d7b9efd22067dbb83e/"
+MODELS = {
+    "fast": {
+        "path": "models/auto-seek-acts-b32-v1.onnx",
+        "url": HF + "auto-seek-acts-b32-v1.onnx",
+        "sha256": "685eb33581b8f2003c8ba0b3022b93da09ab5a0599e8d81bc2a8bbe566e528cb",
+        "size": 88670767,
+        "id": "acts-b32-v1",
+    },
+    "accurate": {
+        "path": "models/auto-seek-acts-b16-v1.onnx",
+        "url": HF + "auto-seek-acts-b16-v1.onnx",
+        "sha256": "a41a4f7c1ad0e9e5ed1b231fd5b77882efdcfc266202ddaf6ce41f0bf9cf35a0",
+        "size": 87353144,
+        "id": "acts-b16-v1",
+    },
 }
-# Part of every cached result: a new model or rule recomputes older results.
-MODEL_ID = "clip3-v2+t70"
-ACTS = ("ballerina", "cowgirl", "fingering", "from behind", "handjob",
-        "missionary", "oral on her", "oral on him", "side/spoon", "titjob")  # fmt: skip
+ACTS = (
+    "nothing yet", "kissing", "striptease / tease", "massage / oil", "breast worship",
+    "ass worship", "masturbation / toys", "oral on him", "oral on her", "69", "rimming",
+    "handjob", "fingering", "titjob", "cowgirl", "missionary", "doggy style", "prone bone",
+    "side/spoon", "ballerina", "stand & carry", "pile driving", "scissoring", "facial",
+    "in mouth", "on body", "creampie", "foot play",
+)  # fmt: skip
+FOREPLAY = ("kissing", "striptease / tease", "massage / oil", "breast worship", "ass worship",
+            "masturbation / toys")  # fmt: skip
+POSITIONS = ("cowgirl", "missionary", "doggy style", "prone bone", "side/spoon", "ballerina",
+             "stand & carry", "pile driving", "scissoring")  # fmt: skip
+LATER = ("oral on him", "oral on her", "69", "rimming", "handjob", "fingering", "titjob",
+         *POSITIONS, "facial", "in mouth", "on body", "creampie")  # fmt: skip
+# Where the action counts as started: a frame's score is the chance that it
+# shows any of the stage's acts. The first two are experimental (foreplay is
+# the least reliable to tell apart from an intro).
+STAGES = {
+    "anything": FOREPLAY + LATER,
+    "foreplay": tuple(act for act in FOREPLAY if act != "striptease / tease") + LATER,
+    "kissing": ("kissing", *LATER),
+    "oral": LATER,
+    "sex": POSITIONS,
+}
+DEFAULT_STAGE = "oral"
+CHOICE_PATH = os.path.join(DATA_DIR, "choice.json")
+
+
+def stage_of(settings: dict) -> str:
+    """The start-stage setting: a free-text field, read leniently ("Kissing
+    or later", "sex positions", ...)."""
+    text = str(settings.get("startStage") or "").strip().lower()
+    for key in ("anything", "foreplay", "kissing", "oral", "sex", "position"):
+        if text.startswith(key) or key in text.split():
+            return "sex" if key == "position" else key
+    return DEFAULT_STAGE
+
+
+def size_of(settings: dict) -> str:
+    return "accurate" if settings.get("accurateModel") is True else "fast"
+
+
+def model_id(size: str, stage: str) -> str:
+    """Part of every cached result: another model, stage or rule recomputes
+    older results."""
+    return f"{MODELS[size]['id']}/{stage}+t80p10"
+
+
+def chosen_size() -> str:
+    """The model size the settings asked for when last read; downloads and
+    the status follow it."""
+    size = read_json(CHOICE_PATH, {}).get("size")
+    return size if size in MODELS else "fast"
+
+
+def choose(size: str) -> None:
+    """Remember the model size and switch the files to fetch to it."""
+    global MODEL, FILES
+    if chosen_size() != size or not os.path.isfile(CHOICE_PATH):
+        with contextlib.suppress(OSError):
+            write_json(CHOICE_PATH, {"size": size})
+    MODEL = MODELS[size]
+    FILES = files_needed()
+
 
 # ONNX Runtime per platform: Microsoft's release builds, and for musl (Stash's
 # Docker image is Alpine) Alpine's own build with the libraries it needs. Only
@@ -192,8 +262,6 @@ def files_needed() -> tuple[dict, ...]:
     return (MODEL, RUNTIMES[key]) if key in RUNTIMES else (MODEL,)
 
 
-FILES = files_needed()
-
 LOCK_STALE_SECONDS = 120
 CHUNK = 1 << 20
 
@@ -216,6 +284,10 @@ def write_json(path: str, value) -> None:
     with open(temporary, "w", encoding="utf-8") as out:
         json.dump(value, out)
     os.replace(temporary, path)
+
+
+MODEL = MODELS[chosen_size()]
+FILES = files_needed()
 
 
 # ── download ──────────────────────────────────────────────────────────────
@@ -381,8 +453,8 @@ def unpack(entry: dict, archive: str) -> None:
 
 
 def remove_unused(verified: dict) -> None:
-    """Delete downloads an earlier version pinned (an older model, say), so an
-    update doesn't leave 89 MB behind."""
+    """Delete downloads an earlier version pinned (an older model, or the
+    other model size), so a switch doesn't leave 90 MB behind."""
     wanted = {entry["path"] for entry in FILES}
     root = os.path.realpath(FILES_DIR)
     for path in [path for path in verified if path not in wanted]:
@@ -431,7 +503,8 @@ def download() -> None:
         write_json(STATE_PATH, {"state": "ready", "received": 0, "updated_at": now()})
     except Exception as error:  # reported to the UI through status()
         write_json(
-            STATE_PATH, {"state": "error", "error": str(error), "received": 0, "updated_at": now()}
+            STATE_PATH,
+            {"state": "error", "error": str(error), "received": 0, "updated_at": now()},
         )
     finally:
         with contextlib.suppress(OSError):
@@ -807,10 +880,18 @@ def blank(pixels: bytes) -> bool:
 
 # ── the search ────────────────────────────────────────────────────────────
 
-# Tuned on hand-checked start points with the real search below (196 scenes:
-# 77% within 60 s of the viewer's start).
+# Tuned on hand-checked start points with the real search below and the act
+# models (210 scenes; "oral, hands or sex": 82% within 60 s of the checked
+# start, against 67% for the previous model).
 RULE = {
-    "threshold": 0.7,  # a frame at or above this counts as started
+    "threshold": 0.8,  # a frame at or above this counts as started
+    # A frame counts only as sure as the one this many seconds later: a single
+    # frame that looks like the stage (a cutaway, a teaser in the intro) no
+    # longer passes for the start (+4 points, +12 for "kissing or later").
+    "pair_s": 10,
+    # At least one coarse frame per this many seconds, so a long scene isn't
+    # sampled more thinly than a short one.
+    "segment_s": 90,
     "window_low": 0.5,  # the scan widens back over coarse frames this likely
     # A "maybe" frame just before the jump: the start may lie before it, so the
     # scan starts one sample earlier (+2 points on the checked scenes, 4 won,
@@ -836,10 +917,12 @@ def parse_exclude(value, duration: float) -> float:
     return duration * number / 100 if text.endswith("%") else number
 
 
-def coarse_times(duration: float, config: dict) -> list[float]:
-    """Where Stash's preview samples the scene: its segments, spaced evenly
-    between the exclusions."""
+def coarse_times(duration: float, config: dict, rule: dict = RULE) -> list[float]:
+    """Where Stash's preview samples the scene: its segments (more for a long
+    scene, see "segment_s"), spaced evenly between the exclusions."""
     segments = max(1, int(config.get("previewSegments") or 12))
+    if rule.get("segment_s"):
+        segments = max(segments, math.ceil(duration / rule["segment_s"]))
     start = parse_exclude(config.get("previewExcludeStart"), duration)
     end = parse_exclude(config.get("previewExcludeEnd"), duration)
     step = max(0.0, duration - start - end) / segments
@@ -866,8 +949,13 @@ def scan_window(
     frames that already look likely and forwards over ones not yet sure.
     When the jump is already at the first frame scored, the start may lie
     anywhere before it, so the scan begins at `origin` (where sampling
-    began, usually 0:00; the first sample can be a blank opening frame)."""
-    index = change_point(probs)
+    began, usually 0:00; the first sample can be a blank opening frame).
+    The change point is the first frame that is clearly started, when there
+    is one: with acts that come and go, a later dip no longer pulls the split
+    past the real start."""
+    index = next((i for i, p in enumerate(probs) if p >= rule["window_high"]), None)
+    if index is None:
+        index = change_point(probs)
     if index == 0 and origin is not None and origin < times[0]:
         high = 0
         while high < len(probs) - 1 and probs[high] < rule["window_high"]:
@@ -935,7 +1023,7 @@ def search(
     coarse_t: list[float] = []
     coarse: list[float] = []
     looked = sure = 0
-    for t, score in frames(coarse_times(duration, config)):
+    for t, score in frames(coarse_times(duration, config, rule)):
         looked += 1
         if score is not None:
             coarse_t.append(t)
@@ -949,7 +1037,7 @@ def search(
     seen += list(zip(coarse_t, coarse, strict=True))
     phase("zooming")
     # Fine pass over the window, in time order, stopping at the first hit.
-    plan = coarse_times(duration, config)
+    plan = coarse_times(duration, config, rule)
     low, high = scan_window(coarse_t, coarse, rule, origin=plan[0] if plan else None)
     start, last_miss = high, None
     found = False
@@ -1021,9 +1109,10 @@ class FilesMissing(ValueError):
 
 
 def scorer(threads: int, download: bool = True) -> ort_api.Session:
-    """The model, loaded once per process. Missing files start the download
-    unless `download` is off (the viewer turned downloads off)."""
-    if threads not in _scorer:
+    """The chosen model, loaded once per process. Missing files start the
+    download unless `download` is off (the viewer turned downloads off)."""
+    key = (MODEL["path"], threads)
+    if key not in _scorer:
         started = time.monotonic()
         verified = read_json(VERIFIED_PATH, {})
         runtime = RUNTIMES.get(platform_key() or "")
@@ -1041,9 +1130,26 @@ def scorer(threads: int, download: bool = True) -> ort_api.Session:
         model = model_bytes()
         read = time.monotonic()
         _scorer.clear()
-        _scorer[threads] = ort_api.Session(target_of(runtime), model, threads, len(ACTS))
+        _scorer[key] = ort_api.Session(target_of(runtime), model, threads, len(ACTS))
         LOAD_TIMES.update(read=read - started, session=time.monotonic() - read)
-    return _scorer[threads]
+    return _scorer[key]
+
+
+def stage_score(acts: list[float], stage: str) -> float:
+    """The chance that a frame shows any of the stage's acts, from the
+    model's chance for each act."""
+    missing = 1.0
+    for act in STAGES[stage]:
+        missing *= 1 - acts[ACTS.index(act)]
+    return 1 - missing
+
+
+def current_choice(settings: dict) -> tuple[str, str, str]:
+    """The model size, the stage and the id results are cached under, and
+    the download switched to that size."""
+    size, stage = size_of(settings), stage_of(settings)
+    choose(size)
+    return size, stage, model_id(size, stage)
 
 
 def plugin_settings(config: dict) -> dict:
@@ -1073,8 +1179,9 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     status = {"phase": "loading"}
     if eager:  # someone is watching the strip
         write_progress(scene_id, duration, live, "loading")
+    settings = plugin_settings(config)
+    _, stage, current_id = current_choice(settings)
     try:
-        settings = plugin_settings(config)
         session = scorer(threads_setting(settings), settings.get("disableDownload") is not True)
     except Exception:
         # e.g. still downloading: the player should see the download instead
@@ -1089,7 +1196,17 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
         if eager:
             write_progress(scene_id, duration, live, name)
 
-    def score_at(times: list[float]) -> list[float | None]:
+    frame_scores: dict[float, float | None] = {}
+    pair = RULE.get("pair_s") or 0
+
+    def partner(t: float) -> float:
+        return max(t, min(t + pair, duration - 1))
+
+    def score_frames(times: list[float]) -> None:
+        """Cut and score the frames not scored yet, in parallel batches."""
+        times = sorted({t for t in times if t not in frame_scores})
+        if not times:
+            return
         t0 = time.monotonic()
         groups = [times[i : i + FRAMES_PER_RUN] for i in range(0, len(times), FRAMES_PER_RUN)]
         if len(groups) > 1:
@@ -1099,17 +1216,29 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
         else:
             grabs = grab_frames(ffmpeg, path, times)
         t1 = time.monotonic()
-        out: list[float | None] = []
         for t, pixels in zip(times, grabs, strict=True):
             score = None
             if pixels is not None and not blank(pixels):
-                score = session.score(pixels, [t / duration, t / 60, duration / 3600])[0]
+                acts = session.score(pixels, [t / duration, t / 60, duration / 3600])[1]
+                score = stage_score(acts, stage)
+            frame_scores[t] = score
+        timings["cut"] += t1 - t0
+        timings["score"] += time.monotonic() - t1
+
+    def score_at(times: list[float]) -> list[float | None]:
+        # Each frame with its partner a few seconds later: a frame is only as
+        # sure as the less sure of the two (a blank partner doesn't count).
+        score_frames([*times, *(partner(t) for t in times)] if pair else times)
+        out: list[float | None] = []
+        for t in times:
+            score, later = frame_scores[t], frame_scores[partner(t)] if pair else None
+            if score is not None and later is not None:
+                score = min(score, later)
+            if score is not None:
                 live.append([round(t, 2), round(score, 4)])
                 if eager:  # someone is watching the strip fill in
                     write_progress(scene_id, duration, live, status["phase"])
             out.append(score)
-        timings["cut"] += t1 - t0
-        timings["score"] += time.monotonic() - t1
         return out
 
     try:
@@ -1122,7 +1251,7 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
             "scene_id": scene_id,
             "start": start,
             "duration": duration,
-            "model": MODEL_ID,
+            "model": current_id,
             # Every frame scored, including ones cut in a batch that the
             # search ended up not needing: the player shows them all, and the
             # live view it drew while waiting must not lose bars afterwards.
@@ -1134,7 +1263,7 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     return {
         "start": start,
         "duration": duration,
-        "model": MODEL_ID,
+        "model": current_id,
         "frames": len(scores),
         "samples": live,
         "threshold": RULE["threshold"],
@@ -1183,12 +1312,19 @@ def scan_progress(args: dict) -> dict:
     return {}
 
 
-def record_failure(scene_id: str, error: Exception) -> None:
+SETTINGS_QUERY = '{ configuration { plugins(include: ["auto-seek"]) } }'
+
+
+def settings_now(server: dict) -> dict:
+    return plugin_settings(stash_query(server, SETTINGS_QUERY, {})["configuration"])
+
+
+def record_failure(scene_id: str, error: Exception, current_id: str) -> None:
     with contextlib.closing(cache()) as connection, connection:
         connection.execute(
             "INSERT OR REPLACE INTO failure (scene_id, model, error, failed_at) "
             "VALUES (?, ?, ?, ?)",
-            (scene_id, MODEL_ID, str(error)[:500], now()),
+            (scene_id, current_id, str(error)[:500], now()),
         )
 
 
@@ -1196,19 +1332,20 @@ def analyse(args: dict, server: dict) -> dict:
     """The player's request: the cached start, or one worked out now."""
     scene_id = str(args["scene_id"])
     point = get_points({"scene_ids": [scene_id]}).get(scene_id)
-    # A start saved before frame times were kept is worked out again once, so
-    # the player can draw its chart; a start the viewer marked always stands.
+    # A start from another model or stage, or saved before frame times were
+    # kept, is worked out again; a start the viewer marked always stands.
     current = point and (
-        point["model"] == "user" or (point["model"] == MODEL_ID and point.get("samples"))
+        point["model"] == "user"
+        or (point["model"] == current_choice(settings_now(server))[2] and point.get("samples"))
     )
     if current and not args.get("force"):
         return point
     return analyse_scene(scene_id, server, eager=True)
 
 
-def done_ids(ids: list[str]) -> set[str]:
-    """Scenes with a current answer (computed by this model, marked by the
-    viewer, or failed with this model)."""
+def done_ids(ids: list[str], current_id: str) -> set[str]:
+    """Scenes with a current answer (computed by this model for this stage,
+    marked by the viewer, or failed with it)."""
     if not ids or not os.path.isfile(CACHE_PATH):
         return set()
     marks = ",".join("?" * len(ids))
@@ -1217,7 +1354,7 @@ def done_ids(ids: list[str]) -> set[str]:
             f"SELECT scene_id FROM start_point WHERE model = ? AND scene_id IN ({marks}) "
             f"UNION SELECT scene_id FROM user_start WHERE scene_id IN ({marks}) "
             f"UNION SELECT scene_id FROM failure WHERE model = ? AND scene_id IN ({marks})",
-            [MODEL_ID, *ids, *ids, MODEL_ID, *ids],
+            [current_id, *ids, *ids, current_id, *ids],
         ).fetchall()
     return {row[0] for row in rows}
 
@@ -1250,6 +1387,7 @@ def library_task(args: dict, server: dict) -> dict:
     newest first, one at a time at low priority. Stopping it loses nothing:
     each answer is saved as it is found."""
     lower_priority()
+    current_id = current_choice(settings_now(server))[2]
     ids: list[str] = []
     page = 1
     while True:
@@ -1260,13 +1398,13 @@ def library_task(args: dict, server: dict) -> dict:
         page += 1
     done = set()
     for i in range(0, len(ids), 500):
-        done |= done_ids(ids[i : i + 500])
+        done |= done_ids(ids[i : i + 500], current_id)
     todo = [scene_id for scene_id in ids if scene_id not in done]
     analysed = failed = 0
     started = time.monotonic()
     progress(0, f"Auto Seek: {len(todo)} of {len(ids)} scenes to analyse")
     for n, scene_id in enumerate(todo, 1):
-        if scene_id in done_ids([scene_id]):
+        if scene_id in done_ids([scene_id], current_id):
             continue  # the worker or the player got there first
         try:
             analyse_scene(scene_id, server)
@@ -1274,7 +1412,7 @@ def library_task(args: dict, server: dict) -> dict:
         except Exception as error:  # one bad file must not stop the run
             if isinstance(error, FilesMissing) or "can't run" in str(error):
                 raise
-            record_failure(scene_id, error)
+            record_failure(scene_id, error, current_id)
             failed += 1
         if n % 10 == 0 or n == len(todo):
             rate = (time.monotonic() - started) / n
@@ -1291,14 +1429,14 @@ def hook(args: dict, server: dict) -> dict:
     scene_id = str((args.get("hookContext") or {}).get("id") or "")
     if not scene_id:
         return {}
-    config = stash_query(server, '{ configuration { plugins(include: ["auto-seek"]) } }', {})[
-        "configuration"
-    ]
-    if plugin_settings(config).get("disableNewScenes") is True or not status()["ready"]:
+    settings = settings_now(server)
+    current_choice(settings)  # the status below is for the chosen model
+    if settings.get("disableNewScenes") is True or not status()["ready"]:
         return {"queued": False}
     with contextlib.closing(cache()) as connection, connection:
         connection.execute(
-            "INSERT OR IGNORE INTO pending (scene_id, added_at) VALUES (?, ?)", (scene_id, now())
+            "INSERT OR IGNORE INTO pending (scene_id, added_at) VALUES (?, ?)",
+            (scene_id, now()),
         )
     start_worker(server)
     return {"queued": True}
@@ -1344,13 +1482,14 @@ def worker() -> None:
             if row is None:
                 return
             scene_id = row[0]
-            if scene_id not in done_ids([scene_id]):
+            current_id = current_choice(settings_now(server))[2]
+            if scene_id not in done_ids([scene_id], current_id):
                 try:
                     analyse_scene(scene_id, server)
                 except Exception as error:
                     if isinstance(error, FilesMissing):
                         return  # the queue keeps it for the next new scene
-                    record_failure(scene_id, error)
+                    record_failure(scene_id, error, current_id)
             with contextlib.closing(cache()) as connection, connection:
                 connection.execute("DELETE FROM pending WHERE scene_id = ?", (scene_id,))
 
@@ -1380,9 +1519,17 @@ def unmark_point(args: dict) -> dict:
     return {"scene_id": scene_id}
 
 
+def follow_settings(server: dict) -> None:
+    """Switch the files to the model size the settings ask for now, so the
+    player's first status call after a switch starts its download."""
+    if server:
+        with contextlib.suppress(Exception):  # the status works without it
+            current_choice(settings_now(server))
+
+
 OPERATIONS = {
-    "status": lambda args, server: status(),
-    "ensure": lambda args, server: ensure(),
+    "status": lambda args, server: follow_settings(server) or status(),
+    "ensure": lambda args, server: follow_settings(server) or ensure(),
     "get": lambda args, server: get_points(args),
     "analyse": analyse,
     "progress": lambda args, server: scan_progress(args),

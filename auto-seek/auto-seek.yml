@@ -31,6 +31,14 @@ hooks:
       op: hook
 
 settings:
+  startStage:
+    displayName: Start at
+    description: "What counts as the start: kissing (kissing or later), oral (oral, hands or sex; the default) or sex (sex positions). Experimental: foreplay (foreplay or later, not tease) and anything (tease included). Changing it works the start points out again."
+    type: STRING
+  accurateModel:
+    displayName: Use the accurate model
+    description: A larger image model (ViT-B/16 instead of B/32) that finds starts a little more accurately and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
+    type: BOOLEAN
   autoSkip:
     displayName: Skip automatically
     description: When a scene starts playing from the beginning, jump to where the action starts. Off by default; the player button works either way.
@@ -57,5 +65,5 @@ settings:
     type: NUMBER
   disableDownload:
     displayName: Don't download the model
-    description: Auto Seek fetches its 89 MB image model and an ONNX Runtime build for this server (10–80 MB) in the background soon after installation. Turn this on to prevent that; Auto Seek then stays unavailable.
+    description: Auto Seek fetches its 90 MB image model and an ONNX Runtime build for this server (10–80 MB) in the background soon after installation. Turn this on to prevent that; Auto Seek then stays unavailable.
     type: BOOLEAN

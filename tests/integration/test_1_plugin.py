@@ -14,7 +14,8 @@ def test_stash_lists_the_plugin_with_its_task_hook_and_settings(gql) -> None:
     assert [task["name"] for task in plugin["tasks"]] == ["Find start points"]
     assert plugin["hooks"] == [{"hooks": ["Scene.Create.Post"]}]
     assert {s["name"] for s in plugin["settings"]} == {
-        "autoSkip", "leadIn", "hideSkipButton", "hideScanChart", "disableNewScenes", "threads", "disableDownload"
+        "startStage", "accurateModel", "autoSkip", "leadIn", "hideSkipButton", "hideScanChart",
+        "disableNewScenes", "threads", "disableDownload",
     }  # fmt: skip
 
 
@@ -24,5 +25,5 @@ def test_the_backend_runs_on_stashs_python(operation) -> None:
     assert status["supported"], status
     assert status["platform"].startswith("linux-") and status["platform"].endswith("-musl")
     model, runtime = sorted(status["files"])
-    assert model == "models/auto-seek-clip3-v2.onnx"
+    assert model == "models/auto-seek-acts-b32-v1.onnx"
     assert runtime.startswith("runtime/ort-alpine-")
