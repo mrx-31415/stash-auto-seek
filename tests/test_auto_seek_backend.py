@@ -22,7 +22,18 @@ def backend(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("auto_seek_under_test", BACKEND)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    # The plugin's settings, as Stash would return them: the defaults.
+    module.settings_now = lambda server: {}
     return module
+
+
+def default_id(backend):
+    return backend.model_id("fast", "oral")
+
+
+def stash_segments(backend):
+    """The rule with Stash's preview segments only (none added for length)."""
+    return {**backend.RULE, "segment_s": 0}
 
 
 @pytest.fixture
@@ -125,7 +136,9 @@ def test_ensure_starts_one_detached_download(backend, server, monkeypatch):
     backend.FILES = (entry(base, files, "a.bin", b"x" * 10),)
     started = []
     monkeypatch.setattr(
-        backend.subprocess, "Popen", lambda args, **options: started.append((args, options))
+        backend.subprocess,
+        "Popen",
+        lambda args, **options: started.append((args, options)),
     )
 
     first = backend.ensure()
@@ -284,7 +297,8 @@ def test_frames_are_cut_as_raw_model_input(backend, tmp_path):
     video = tmp_path / "scene.mp4"
     source = "testsrc=duration=4:size=640x360:rate=10"
     subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", source, str(video)], check=True
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", source, str(video)],
+        check=True,
     )
     frames = backend.grab_frames(shutil.which("ffmpeg"), str(video), [1.5, 60, 3, 0.5])
     # Short side scaled to 224 and the centre square kept, as raw RGB.
@@ -314,18 +328,25 @@ def test_search_helpers(backend):
     rule = backend.RULE
     assert backend.parse_exclude("5%", 200) == 10 and backend.parse_exclude("12", 200) == 12
     assert backend.parse_exclude(None, 200) == 0 and backend.parse_exclude("x", 200) == 0
-    times = backend.coarse_times(1200, {"previewSegments": 12})
+    times = backend.coarse_times(1200, {"previewSegments": 12}, stash_segments(backend))
     assert len(times) == 12 and times[1] == 100
-    assert backend.coarse_times(1200, {"previewSegments": 12, "previewExcludeStart": "10%"})[
-        :2
-    ] == [
+    # A long scene gets a coarse frame at least every 90 s.
+    assert len(backend.coarse_times(1200, {"previewSegments": 12})) == 14
+    assert backend.coarse_times(
+        1200,
+        {"previewSegments": 12, "previewExcludeStart": "10%"},
+        stash_segments(backend),
+    )[:2] == [
         120,
         210,
     ]
     assert backend.change_point([0.1, 0.1, 0.9, 0.95]) == 2
     assert backend.change_point([0.9, 0.9, 0.9]) == 0
     assert backend.change_point([0.1, 0.2, 0.1]) == 2
-    assert backend.scan_window([0, 100, 200, 300], [0.1, 0.6, 0.7, 0.9], rule) == (0, 300)
+    assert backend.scan_window([0, 100, 200, 300], [0.1, 0.6, 0.7, 0.9], rule) == (
+        0,
+        300,
+    )
     window = backend.scan_window([0, 100, 200, 300, 400], [0.1, 0.2, 0.95, 0.95, 0.95], rule)
     assert window == (100, 200)
     # A "maybe" frame before the jump moves the scan one sample back: the
@@ -336,7 +357,17 @@ def test_search_helpers(backend):
     # the start may lie before it, so the scan begins where sampling began.
     window = backend.scan_window([116, 232, 348], [0.98, 0.04, 0.92], rule, origin=0)
     assert window == (0, 116)
-    assert backend.scan_times(0, 300, rule) == [0, 37.5, 75, 112.5, 150, 187.5, 225, 262.5, 300]
+    assert backend.scan_times(0, 300, rule) == [
+        0,
+        37.5,
+        75,
+        112.5,
+        150,
+        187.5,
+        225,
+        262.5,
+        300,
+    ]
     assert backend.scan_times(100, 130, rule) == [100, 115, 130]
     assert backend.scan_times(200, 200, rule) == [200]
     assert backend.bisect_times(268, 289, 2) == [273.25, 278.5, 283.75]
@@ -350,7 +381,7 @@ def test_search_finds_the_start_and_stops_early(backend):
         calls.append(list(times))
         return [0.97 if t >= 437 else 0.05 for t in times]
 
-    start, scores = backend.search(score_at, 1200, {"previewSegments": 12})
+    start, scores = backend.search(score_at, 1200, {"previewSegments": 12}, stash_segments(backend))
     # Coarse frames every 100 s, cut three at a time; the first two sure ones
     # (500, 600) end that pass, so nothing after the batch holding 600 is cut.
     assert calls[:3] == [[0, 100, 200], [300, 400, 500], [600, 700, 800]]
@@ -370,8 +401,11 @@ def test_eager_search_asks_for_each_pass_at_once_with_the_same_answer(backend):
         return score_at
 
     lazy, eager = [], []
-    expected = backend.search(scorer(lazy), 1200, {"previewSegments": 12})
-    assert backend.search(scorer(eager), 1200, {"previewSegments": 12}, eager=True) == expected
+    rule = stash_segments(backend)
+    expected = backend.search(scorer(lazy), 1200, {"previewSegments": 12}, rule)
+    assert (
+        backend.search(scorer(eager), 1200, {"previewSegments": 12}, rule, eager=True) == expected
+    )
     assert len(eager[0]) == 12 and len(eager) == 3  # coarse, scan, bisection points
     assert len(lazy) > len(eager)
 
@@ -452,7 +486,11 @@ def test_runtime_archives_keep_only_the_named_members(backend, server, kind, tmp
     import zipfile
 
     base, files, _ = server
-    members = {"ort/lib/libonnxruntime.so.1.2.3": b"LIB", "ort/LICENSE": b"MIT", "ort/x.h": b"h"}
+    members = {
+        "ort/lib/libonnxruntime.so.1.2.3": b"LIB",
+        "ort/LICENSE": b"MIT",
+        "ort/x.h": b"h",
+    }
     archive = tmp_path / f"ort.{kind}"
     if kind == "zip":
         with zipfile.ZipFile(archive, "w") as bundle:
@@ -514,7 +552,7 @@ def test_analyse_answers_from_the_cache(backend, monkeypatch):
             "scene_id": 7,
             "start": 300,
             "duration": 1800,
-            "model": backend.MODEL_ID,
+            "model": default_id(backend),
             "scores": [(300, 0.9)],
         }
     )
@@ -536,7 +574,7 @@ def test_analyse_answers_from_the_cache(backend, monkeypatch):
 
 
 def test_library_task_skips_answered_scenes_and_records_failures(backend, monkeypatch):
-    backend.put_point({"scene_id": 1, "start": 30, "duration": 900, "model": backend.MODEL_ID})
+    backend.put_point({"scene_id": 1, "start": 30, "duration": 900, "model": default_id(backend)})
     backend.mark_point({"scene_id": 2, "start": 40, "duration": 900})
     pages = {1: ["1", "2", "3"], 2: ["4"]}
     monkeypatch.setattr(
@@ -557,7 +595,12 @@ def test_library_task_skips_answered_scenes_and_records_failures(backend, monkey
         if scene_id == "4":
             raise ValueError("broken file")
         backend.put_point(
-            {"scene_id": scene_id, "start": 1, "duration": 9, "model": backend.MODEL_ID}
+            {
+                "scene_id": scene_id,
+                "start": 1,
+                "duration": 9,
+                "model": default_id(backend),
+            }
         )
 
     monkeypatch.setattr(backend, "analyse_scene", analyse_scene)
@@ -570,7 +613,9 @@ def test_library_task_skips_answered_scenes_and_records_failures(backend, monkey
 
 def test_new_scenes_queue_for_one_worker(backend, monkeypatch):
     monkeypatch.setattr(
-        backend, "stash_query", lambda *args: {"configuration": {"plugins": {"auto-seek": {}}}}
+        backend,
+        "stash_query",
+        lambda *args: {"configuration": {"plugins": {"auto-seek": {}}}},
     )
     monkeypatch.setattr(backend, "status", lambda: {"ready": True})
     spawned = []
@@ -609,7 +654,7 @@ def test_worker_drains_the_queue(backend, monkeypatch):
         connection.executemany(
             "INSERT INTO pending VALUES (?, ?)", [("5", "a"), ("6", "b"), ("7", "c")]
         )
-    backend.put_point({"scene_id": 6, "start": 1, "duration": 9, "model": backend.MODEL_ID})
+    backend.put_point({"scene_id": 6, "start": 1, "duration": 9, "model": default_id(backend)})
     seen = []
 
     def analyse_scene(scene_id, server):
@@ -622,7 +667,9 @@ def test_worker_drains_the_queue(backend, monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"Port": 1})))
     backend.worker()
     assert seen == [("5", {"Port": 1}), ("7", {"Port": 1})]
-    assert backend.done_ids(["7"]) == {"7"}  # failed with this model: not retried
+    assert backend.done_ids(["7"], default_id(backend)) == {
+        "7"
+    }  # failed with this model: not retried
     with backend.cache() as connection:
         assert connection.execute("SELECT COUNT(*) FROM pending").fetchone()[0] == 0
 
@@ -634,7 +681,8 @@ def test_frame_preview_is_a_small_jpeg_of_that_moment(backend, tmp_path, monkeyp
     video = tmp_path / "scene.mp4"
     source = "testsrc=duration=4:size=640x360:rate=10"
     subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", source, str(video)], check=True
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", source, str(video)],
+        check=True,
     )
     monkeypatch.setattr(
         backend,
@@ -673,3 +721,68 @@ def test_ffmpeg_runs_are_limited_across_processes(backend, monkeypatch):
     for thread in threads:
         thread.join()
     assert peak == 2
+
+
+def test_start_stage_and_model_settings(backend):
+    assert backend.stage_of({}) == "oral"
+    assert backend.stage_of({"startStage": "Kissing or later"}) == "kissing"
+    assert backend.stage_of({"startStage": "sex positions"}) == "sex"
+    assert backend.stage_of({"startStage": "positions"}) == "sex"
+    assert backend.stage_of({"startStage": "anything"}) == "anything"
+    assert backend.stage_of({"startStage": "nonsense"}) == "oral"
+    assert backend.size_of({"accurateModel": True}) == "accurate"
+    # Every stage and size caches under its own id, so a change recomputes.
+    ids = {backend.model_id(size, stage) for size in backend.MODELS for stage in backend.STAGES}
+    assert len(ids) == len(backend.MODELS) * len(backend.STAGES)
+    assert all(act in backend.ACTS for acts in backend.STAGES.values() for act in acts)
+    acts = [0.0] * len(backend.ACTS)
+    acts[backend.ACTS.index("kissing")] = 0.5
+    acts[backend.ACTS.index("cowgirl")] = 0.5
+    assert backend.stage_score(acts, "sex") == 0.5
+    assert backend.stage_score(acts, "kissing") == 0.75
+    # Choosing the other size switches the download to that model only.
+    backend.choose("accurate")
+    assert backend.chosen_size() == "accurate"
+    assert backend.MODELS["accurate"] in backend.FILES
+    assert backend.MODELS["fast"] not in backend.FILES
+
+
+def test_analysis_scores_the_stage_and_a_frame_ten_seconds_on(backend, monkeypatch):
+    # Kissing in a two-second teaser at 360 s (a coarse frame), then from 500 s; oral from 900 s.
+    def acts_at(t):
+        acts = [0.01] * len(backend.ACTS)
+        if 360 <= t < 362 or t >= 500:
+            acts[backend.ACTS.index("kissing")] = 0.99
+        if t >= 900:
+            acts[backend.ACTS.index("oral on him")] = 0.99
+        return acts
+
+    class Session:
+        def score(self, pixels, features):
+            return 0.5, acts_at(round(features[0] * 1800, 3))
+
+    settings: dict = {}
+    monkeypatch.setattr(
+        backend,
+        "stash_query",
+        lambda *args: {
+            "findScene": {"files": [{"path": "/v.mp4", "duration": 1800}]},
+            "configuration": {
+                "general": {"previewSegments": 12},
+                "plugins": {"auto-seek": settings},
+            },
+        },
+    )
+    monkeypatch.setattr(backend, "scorer", lambda threads, download=True: Session())
+    monkeypatch.setattr(backend, "find_ffmpeg", lambda configured, server: "ffmpeg")
+    monkeypatch.setattr(
+        backend,
+        "grab_frames",
+        lambda ffmpeg, path, times: [b"\0\xff" * 64] * len(times),
+    )
+    found = backend.analyse_scene("1", {})
+    assert 890 <= found["start"] <= 905 and found["model"] == default_id(backend)
+    settings["startStage"] = "kissing"
+    found = backend.analyse_scene("1", {})
+    # The teaser frame at 360 s is not followed by kissing 10 s later.
+    assert 490 <= found["start"] <= 505 and found["model"] == backend.model_id("fast", "kissing")
