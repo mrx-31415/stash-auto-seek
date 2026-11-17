@@ -151,6 +151,27 @@
       .every((typed) => words.some((word) => word.startsWith(typed)));
   }
 
+  const ACT_LABELS = new Map(ACT_GROUPS.flatMap((group) => group.acts.map(([name, label]) => [name, label])));
+  const actLabel = (name) => ACT_LABELS.get(name) || name;
+
+  // The timeline's rows from the backend's answer (op "timeline"): every act
+  // that first shows somewhere, in the order it does, then acts the model
+  // was fairly sure of somewhere without a clear start. Frames are
+  // [time, [percent per act] or null]; each row gets its [time, score] pairs.
+  function timelineRows({ acts = [], frames = [], firsts = {} }, floor = 0.5) {
+    const sorted = frames.filter(([, scores]) => scores).sort((a, b) => a[0] - b[0]);
+    const rows = [];
+    acts.forEach((name, j) => {
+      if (j === 0) return; // "nothing yet"
+      const points = sorted.map(([time, scores]) => [time, scores[j] / 100]);
+      const peak = points.reduce((best, [, score]) => Math.max(best, score), 0);
+      const first = firsts[name];
+      if (first == null && peak < floor) return;
+      rows.push({ name, label: actLabel(name), first: first ?? null, peak, points });
+    });
+    return rows.sort((a, b) => (a.first ?? Infinity) - (b.first ?? Infinity) || b.peak - a.peak);
+  }
+
   // ── end pure helpers ───────────────────────────────────────────────────
 
   async function graphql(query, variables) {
@@ -670,7 +691,7 @@
         view.threshold = result.threshold;
         view.state = "ready";
         render();
-        showStart(view, true).catch(() => {});
+        showStart(view, true).catch(() => {}).finally(() => watchTimeline(view));
         return view.target;
       },
       (error) => {
@@ -835,7 +856,7 @@
     const id = sceneIdFrom(pathname);
     if (!id) {
       current = null;
-      document.querySelectorAll(".auto-seek-strip").forEach((strip) => strip.remove());
+      document.querySelectorAll(".auto-seek-strip, .auto-seek-timeline").forEach((element) => element.remove());
       return;
     }
     // Start right away; the player mounts a moment later and finds it running.
@@ -855,6 +876,194 @@
     observer = new MutationObserver(() => { if (tryAttach()) { observer.disconnect(); observer = null; } });
     observer.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => { observer?.disconnect(); observer = null; }, 30000);
+  }
+
+  // ── act timeline ───────────────────────────────────────────────────────
+
+  // Under the player once the start is known: every act the model sees,
+  // its score across the scene and where it first shows. The server scans
+  // the whole scene in the background, left to right, and the timeline
+  // fills in live (with a line where the scan is) while this page is open.
+  // The lanes line up with the seek bar, as the scan chart's bars do.
+  const TIMELINE_COLLAPSED_KEY = "auto-seek:timeline-collapsed";
+  const TIMELINE_MORE_KEY = "auto-seek:timeline-more";
+  const TIMELINE_POLL_MS = 1000;
+
+  function stored(key) {
+    try { return localStorage.getItem(key) === "1"; } catch (error) { return false; }
+  }
+  function store(key, on) {
+    try { localStorage.setItem(key, on ? "1" : "0"); } catch (error) { /* this page only */ }
+  }
+
+  function ensureTimeline(view) {
+    if (view.timeline?.isConnected) return view.timeline;
+    const wrapper = view.video.closest(".video-wrapper");
+    if (!wrapper?.parentElement) return null;
+    document.querySelectorAll(".auto-seek-timeline").forEach((old) => old.remove());
+    const panel = document.createElement("section");
+    panel.className = "auto-seek-timeline";
+    panel.classList.toggle("is-collapsed", stored(TIMELINE_COLLAPSED_KEY));
+    panel.classList.toggle("shows-more", stored(TIMELINE_MORE_KEY));
+    panel.innerHTML =
+      '<button type="button" class="auto-seek-tl-head">' +
+      '<span class="auto-seek-tl-title">Acts</span> <span class="auto-seek-tl-status"></span>' +
+      '<span class="auto-seek-tl-chevron" aria-hidden="true">▾</span></button>' +
+      '<div class="auto-seek-tl-body"><div class="auto-seek-tl-rows"></div>' +
+      '<button type="button" class="auto-seek-tl-more" hidden></button>' +
+      '<span class="auto-seek-tl-scanline" hidden></span><span class="auto-seek-tl-playhead" hidden></span></div>';
+    const head = panel.querySelector(".auto-seek-tl-head");
+    head.setAttribute("aria-expanded", String(!panel.classList.contains("is-collapsed")));
+    head.addEventListener("click", () => {
+      const collapsed = panel.classList.toggle("is-collapsed");
+      head.setAttribute("aria-expanded", String(!collapsed));
+      store(TIMELINE_COLLAPSED_KEY, collapsed);
+      if (!collapsed) alignTimeline(view);
+    });
+    panel.querySelector(".auto-seek-tl-more").addEventListener("click", () => {
+      store(TIMELINE_MORE_KEY, panel.classList.toggle("shows-more"));
+      if (view.timelineAnswer) paintTimeline(view, view.timelineAnswer);
+    });
+    const rows = panel.querySelector(".auto-seek-tl-rows");
+    // A tap on a lane plays from there; on an act's name, from where it first shows.
+    rows.addEventListener("click", (event) => {
+      if (current !== view) return;
+      const name = event.target.closest(".auto-seek-tl-name");
+      const lane = event.target.closest(".auto-seek-tl-lane");
+      let time = null;
+      if (name?.dataset.first) time = Number(name.dataset.first);
+      else if (lane && view.timelineDuration) {
+        const box = lane.getBoundingClientRect();
+        time = (Math.min(Math.max(event.clientX - box.left, 0), box.width) / box.width) * view.timelineDuration;
+      }
+      if (time == null) return;
+      seekPlayer(view, time);
+      view.userSeeked = true;
+      if (view.video.paused) playVideo(view).catch(() => {});
+    });
+    rows.addEventListener("pointermove", (event) => {
+      const lane = event.target.closest(".auto-seek-tl-lane");
+      if (!lane || !view.timelineDuration) return;
+      const box = lane.getBoundingClientRect();
+      const time = ((event.clientX - box.left) / box.width) * view.timelineDuration;
+      const row = view.timelineRows?.find((entry) => entry.name === lane.dataset.act);
+      const near = row?.points.reduce((best, point) => (!best || Math.abs(point[0] - time) < Math.abs(best[0] - time) ? point : best), null);
+      lane.title = near ? `${row.label} · ${formatTime(near[0])} · ${Math.round(100 * near[1])}%` : "";
+    });
+    // Below the player and its scrubber, not inside the player: Stash sizes
+    // the player to the window, so rows added inside would shrink the video.
+    const host = wrapper.closest(".scene-player-container");
+    if (host) host.appendChild(panel); else (view.strip?.isConnected ? view.strip : wrapper).after(panel);
+    view.timeline = panel;
+    view.video.addEventListener("timeupdate", () => movePlayhead(view));
+    view.timelineResize?.disconnect();
+    view.timelineResize = new ResizeObserver(() => alignTimeline(view));
+    view.timelineResize.observe(panel);
+    alignTimeline(view);
+    return panel;
+  }
+
+  // The lanes span the seek bar's stretch of the page, so a moment sits
+  // under the same spot of the seek bar (and of the scan chart).
+  function alignTimeline(view) {
+    const panel = view.timeline;
+    const holder = view.video.closest(".video-js")?.querySelector(".vjs-progress-holder");
+    if (!panel || !holder) return;
+    const seek = holder.getBoundingClientRect();
+    const body = panel.querySelector(".auto-seek-tl-body").getBoundingClientRect();
+    if (!seek.width || !body.width) return;
+    const left = Math.max(0, seek.left - body.left);
+    panel.style.setProperty("--tl-left", `${left}px`);
+    panel.style.setProperty("--tl-width", `${Math.min(seek.width, body.width - left)}px`);
+    movePlayhead(view);
+  }
+
+  // A line across the lanes at `time` (the playhead, or where the scan is).
+  function placeLine(view, line, time) {
+    if (!line || !view.timelineDuration || time == null) { if (line) line.hidden = true; return; }
+    const lane = view.timeline.querySelector(".auto-seek-tl-lane");
+    if (!lane) { line.hidden = true; return; }
+    const body = line.parentElement.getBoundingClientRect();
+    const box = lane.getBoundingClientRect();
+    line.hidden = false;
+    line.style.left = `${box.left - body.left + box.width * Math.min(1, Math.max(0, time / view.timelineDuration))}px`;
+  }
+
+  function movePlayhead(view) {
+    placeLine(view, view.timeline?.querySelector(".auto-seek-tl-playhead"), view.video.currentTime);
+  }
+
+  function laneSvg(points, duration, threshold, spacing) {
+    // One bar per frame, a frame step wide, at a fixed place on the lane.
+    const width = Math.max(1, (1000 * spacing) / duration);
+    const bars = points.map(([time, score]) => {
+      const cls = score >= threshold ? ' class="hit"' : "";
+      return `<rect${cls} x="${((1000 * time) / duration).toFixed(1)}" y="${(10 * (1 - score)).toFixed(2)}" width="${width.toFixed(1)}" height="${(10 * score).toFixed(2)}"/>`;
+    });
+    return `<svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true">${bars.join("")}</svg>`;
+  }
+
+  function paintTimeline(view, answer) {
+    const panel = ensureTimeline(view);
+    if (!panel) return;
+    view.timelineAnswer = answer;
+    const rows = timelineRows(answer);
+    view.timelineRows = rows;
+    // The scene's length from the player when the server has none yet, so
+    // the lanes keep one scale from the first frame on.
+    view.timelineDuration = answer.duration || view.duration || view.video.duration;
+    const found = rows.filter((row) => row.first != null);
+    const unsure = rows.length - found.length;
+    const scanning = answer.state === "scanning" || answer.state === "queued";
+    panel.querySelector(".auto-seek-tl-status").textContent = {
+      queued: "· waiting to scan the whole scene…",
+      scanning: `· scanning… ${Math.min(99, Math.round((100 * (answer.scanned || 0)) / (answer.planned || 1)))}%`,
+      failed: `· the scan failed: ${answer.error || "unknown error"}`,
+      done: found.length ? `· ${found.length} found` : "· none found",
+    }[answer.state] || "";
+    panel.classList.toggle("is-scanning", scanning);
+    const more = panel.querySelector(".auto-seek-tl-more");
+    more.hidden = !unsure;
+    more.textContent = panel.classList.contains("shows-more") ? "Show fewer" : `Show ${unsure} more (no clear start)`;
+    const duration = view.timelineDuration;
+    const list = panel.querySelector(".auto-seek-tl-rows");
+    if (!rows.length || !(duration > 0)) {
+      list.innerHTML = answer.state === "done" ? '<p class="auto-seek-tl-empty">The model didn\'t see any act clearly in this scene.</p>' : "";
+    } else {
+      list.innerHTML = rows.map((row) => {
+        const sure = row.first != null;
+        const when = sure ? formatTime(row.first) : "no clear start";
+        const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
+        return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}">` +
+          `<button type="button" class="auto-seek-tl-name"${sure ? ` data-first="${row.first}" title="Play from ${when}"` : ""}>` +
+          `${row.label} <span class="auto-seek-tl-first">${when}</span></button>` +
+          `<div class="auto-seek-tl-lane" data-act="${row.name}">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div>`;
+      }).join("");
+    }
+    placeLine(view, panel.querySelector(".auto-seek-tl-scanline"), scanning && answer.state === "scanning" ? answer.position + (answer.spacing || 10) : null);
+    movePlayhead(view);
+  }
+
+  function watchTimeline(view) {
+    if (view.timelineWatching) return;
+    view.timelineWatching = true;
+    (async () => {
+      while (current === view) {
+        let answer;
+        try {
+          answer = await operation({ op: "timeline", scene_id: view.id });
+        } catch (error) {
+          await sleep(5 * TIMELINE_POLL_MS);
+          continue;
+        }
+        if (current !== view) break;
+        if (answer.state === "off") { view.timeline?.remove(); break; }
+        paintTimeline(view, answer);
+        if (answer.state === "done" || answer.state === "failed") break;
+        await sleep(TIMELINE_POLL_MS);
+      }
+      view.timelineWatching = false;
+    })();
   }
 
   // ── settings page ──────────────────────────────────────────────────────

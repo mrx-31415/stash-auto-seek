@@ -39,6 +39,14 @@ settings:
     displayName: Use the accurate model
     description: A larger image model (ViT-B/16 instead of B/32) that finds starts a little more accurately and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
     type: BOOLEAN
+  disableTimeline:
+    displayName: Don't scan whole scenes
+    description: After finding the start, Auto Seek scans the whole scene in the background and shows each act it sees under the player, with where it first shows. Turn this on to find only the start.
+    type: BOOLEAN
+  timelineSpacing:
+    displayName: Timeline detail (seconds)
+    description: Seconds between the frames the whole-scene scan looks at. Smaller finds short moments and draws a finer timeline, for more work per scene (a 30-minute scene at 10 s is about 180 frames). Default 10.
+    type: NUMBER
   autoSkip:
     displayName: Skip automatically
     description: When a scene starts playing from the beginning, jump to where the action starts. Off by default; the player button works either way.

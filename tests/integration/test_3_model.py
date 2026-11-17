@@ -54,7 +54,9 @@ def test_the_player_offers_the_found_start(ready, page, base_url, scene, operati
     assert errors == []
 
 
-def test_tapping_a_frame_on_the_chart_jumps_there(ready, page, base_url, scene, operation, errors) -> None:
+def test_tapping_a_frame_on_the_chart_jumps_there(
+    ready, page, base_url, scene, operation, errors
+) -> None:
     samples = operation(op="analyse", scene_id=scene["id"])["samples"]
     open_scene(page, base_url, scene)
     page.locator(".video-js video").evaluate("video => { video.muted = true; }")
@@ -91,3 +93,19 @@ def test_the_library_task_finishes(ready, gql, operation, scene) -> None:
     ]
     wait_for_job(gql, job, timeout=300)
     assert operation(op="get", scene_ids=[scene["id"]])[scene["id"]]["model"] == MODEL_ID
+
+
+def test_the_timeline_fills_in_live_and_finishes(
+    ready, page, base_url, scene, operation, errors
+) -> None:
+    operation(op="analyse", scene_id=scene["id"])
+    open_scene(page, base_url, scene)
+    panel = page.locator(".auto-seek-timeline")
+    expect(panel).to_be_visible(timeout=30_000)
+    # The page asked for the scan; the background worker runs it and the
+    # panel follows it to the end.
+    expect(panel.locator(".auto-seek-tl-status")).to_contain_text("found", timeout=180_000)
+    answer = operation(op="timeline", scene_id=scene["id"])
+    assert answer["state"] == "done" and answer["scanned"] == answer["planned"] > 0
+    assert all(0 <= t <= scene["duration"] for t in answer["firsts"].values())
+    assert errors == []
