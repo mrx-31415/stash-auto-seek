@@ -164,10 +164,11 @@
     acts.forEach((name, j) => {
       if (j === 0) return; // "nothing yet"
       const points = sorted.map(([time, scores]) => [time, scores[j] / 100]);
-      const peak = points.reduce((best, [, score]) => Math.max(best, score), 0);
+      const top = points.reduce((best, point) => (!best || point[1] > best[1] ? point : best), null);
+      const peak = top ? top[1] : 0;
       const first = firsts[name];
       if (first == null && peak < floor) return;
-      rows.push({ name, label: actLabel(name), first: first ?? null, peak, points });
+      rows.push({ name, label: actLabel(name), first: first ?? null, peak, peakAt: top ? top[0] : null, points });
     });
     return rows.sort((a, b) => (a.first ?? Infinity) - (b.first ?? Infinity) || b.peak - a.peak);
   }
@@ -906,12 +907,17 @@
     panel.classList.toggle("is-collapsed", stored(TIMELINE_COLLAPSED_KEY));
     panel.classList.toggle("shows-more", stored(TIMELINE_MORE_KEY));
     panel.innerHTML =
-      '<button type="button" class="auto-seek-tl-head">' +
+      '<div class="auto-seek-tl-top"><button type="button" class="auto-seek-tl-head">' +
       '<span class="auto-seek-tl-title">Acts</span> <span class="auto-seek-tl-status"></span>' +
       '<span class="auto-seek-tl-chevron" aria-hidden="true">▾</span></button>' +
+      '<button type="button" class="auto-seek-tl-review" aria-pressed="false" hidden ' +
+      'title="Review: tap a lane once for &quot;wrong, not this act here&quot;, twice for &quot;right, it is here&quot;, a third time to clear">Review</button></div>' +
+      '<p class="auto-seek-tl-review-help" hidden>Go to a moment (play, or tap a lane), then judge it on an act\'s row: ' +
+      '<b class="no">✗</b> not this act here, <b class="yes">✓</b> it is here. It marks the frame you are looking at; press again to take it back.</p>' +
       '<div class="auto-seek-tl-body"><div class="auto-seek-tl-rows"></div>' +
       '<button type="button" class="auto-seek-tl-more" hidden></button>' +
-      '<span class="auto-seek-tl-scanline" hidden></span><span class="auto-seek-tl-playhead" hidden></span></div>';
+      '<span class="auto-seek-tl-scanline" hidden></span><span class="auto-seek-tl-playhead" hidden></span>' +
+      '<div class="auto-seek-tl-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-tl-peek-text"></span></div></div>';
     const head = panel.querySelector(".auto-seek-tl-head");
     head.setAttribute("aria-expanded", String(!panel.classList.contains("is-collapsed")));
     head.addEventListener("click", () => {
@@ -922,16 +928,28 @@
     });
     panel.querySelector(".auto-seek-tl-more").addEventListener("click", () => {
       store(TIMELINE_MORE_KEY, panel.classList.toggle("shows-more"));
-      if (view.timelineAnswer) paintTimeline(view, view.timelineAnswer);
+      if (view.tl) revealUpTo(view, view.tl.shown);
+      else if (view.timelineAnswer) paintTimeline(view, view.timelineAnswer);
+    });
+    const review = panel.querySelector(".auto-seek-tl-review");
+    settings().then(({ plugin }) => { review.hidden = plugin.enableReview !== true; });
+    review.addEventListener("click", () => {
+      view.reviewing = !view.reviewing;
+      review.setAttribute("aria-pressed", String(view.reviewing));
+      panel.classList.toggle("is-reviewing", view.reviewing);
+      panel.querySelector(".auto-seek-tl-review-help").hidden = !view.reviewing;
     });
     const rows = panel.querySelector(".auto-seek-tl-rows");
-    // A tap on a lane plays from there; on an act's name, from where it first shows.
+    // A tap on a lane plays from there; on an act's name, from where it first
+    // shows. In review mode a tap on a lane marks that frame instead.
     rows.addEventListener("click", (event) => {
       if (current !== view) return;
       const name = event.target.closest(".auto-seek-tl-name");
       const lane = event.target.closest(".auto-seek-tl-lane");
+      const judge = event.target.closest(".auto-seek-tl-judge button");
+      if (judge) { judgeHere(view, judge.closest(".auto-seek-tl-row").dataset.act, Number(judge.dataset.verdict)); return; }
       let time = null;
-      if (name?.dataset.first) time = Number(name.dataset.first);
+      if (name?.dataset.jump) time = Number(name.dataset.jump);
       else if (lane && view.timelineDuration) {
         const box = lane.getBoundingClientRect();
         time = (Math.min(Math.max(event.clientX - box.left, 0), box.width) / box.width) * view.timelineDuration;
@@ -941,19 +959,15 @@
       view.userSeeked = true;
       if (view.video.paused) playVideo(view).catch(() => {});
     });
-    rows.addEventListener("pointermove", (event) => {
-      const lane = event.target.closest(".auto-seek-tl-lane");
-      if (!lane || !view.timelineDuration) return;
-      const box = lane.getBoundingClientRect();
-      const time = ((event.clientX - box.left) / box.width) * view.timelineDuration;
-      const row = view.timelineRows?.find((entry) => entry.name === lane.dataset.act);
-      const near = row?.points.reduce((best, point) => (!best || Math.abs(point[0] - time) < Math.abs(best[0] - time) ? point : best), null);
-      lane.title = near ? `${row.label} · ${formatTime(near[0])} · ${Math.round(100 * near[1])}%` : "";
-    });
+    attachTimelinePeek(view, panel);
     // Below the player and its scrubber, not inside the player: Stash sizes
     // the player to the window, so rows added inside would shrink the video.
     const host = wrapper.closest(".scene-player-container");
     if (host) host.appendChild(panel); else (view.strip?.isConnected ? view.strip : wrapper).after(panel);
+    // Where the details column sits below the navigation bar, for keeping it
+    // pinned there while the page scrolls (see auto-seek.css).
+    const tabs = host?.parentElement?.querySelector(":scope > .scene-tabs");
+    if (tabs) document.documentElement.style.setProperty("--auto-seek-tabs-top", `${Math.max(0, tabs.getBoundingClientRect().top + window.scrollY)}px`);
     view.timeline = panel;
     view.video.addEventListener("timeupdate", () => movePlayhead(view));
     view.timelineResize?.disconnect();
@@ -963,18 +977,7 @@
     return panel;
   }
 
-  // The lanes span the seek bar's stretch of the page, so a moment sits
-  // under the same spot of the seek bar (and of the scan chart).
   function alignTimeline(view) {
-    const panel = view.timeline;
-    const holder = view.video.closest(".video-js")?.querySelector(".vjs-progress-holder");
-    if (!panel || !holder) return;
-    const seek = holder.getBoundingClientRect();
-    const body = panel.querySelector(".auto-seek-tl-body").getBoundingClientRect();
-    if (!seek.width || !body.width) return;
-    const left = Math.max(0, seek.left - body.left);
-    panel.style.setProperty("--tl-left", `${left}px`);
-    panel.style.setProperty("--tl-width", `${Math.min(seek.width, body.width - left)}px`);
     movePlayhead(view);
   }
 
@@ -993,6 +996,294 @@
     placeLine(view, view.timeline?.querySelector(".auto-seek-tl-playhead"), view.video.currentTime);
   }
 
+  // Hovering a lane shows that moment: Stash's seek-bar thumbnail at once,
+  // then the exact frame the scan scored nearest to it.
+  function attachTimelinePeek(view, panel) {
+    const rows = panel.querySelector(".auto-seek-tl-rows");
+    const peek = panel.querySelector(".auto-seek-tl-peek");
+    const image = peek.querySelector(".auto-seek-strip-peek-image");
+    const text = peek.querySelector(".auto-seek-tl-peek-text");
+    const show = async (event) => {
+      const lane = event.target.closest(".auto-seek-tl-lane");
+      const duration = view.timelineDuration;
+      if (!lane || !duration) { peek.hidden = true; return; }
+      const box = lane.getBoundingClientRect();
+      const time = ((event.clientX - box.left) / box.width) * duration;
+      const j = view.timelineActs?.indexOf(lane.dataset.act) ?? -1;
+      const near = nearestFrame(view, time); // nothing the scan line hasn't revealed yet
+      if (!near || j < 0) { peek.hidden = true; return; }
+      const [at, scores] = near;
+      text.textContent = `${actLabel(lane.dataset.act)} · ${formatTime(at)} · ${scores[j]}%`;
+      const body = peek.parentElement.getBoundingClientRect();
+      const x = box.left - body.left + (box.width * at) / duration;
+      peek.style.left = `${Math.min(Math.max(x, 85), body.width - 85)}px`;
+      peek.style.top = `${box.top - body.top}px`;
+      peek.hidden = false;
+      peek.dataset.time = String(at);
+      const exact = frameCache.get(`${view.id}:${at}`);
+      if (typeof exact === "string") { showImage(image, { url: exact }); return; }
+      const sprite = await sceneSprite(view.id);
+      const cue = sprite && spriteCue(sprite.cues, at);
+      if (peek.dataset.time !== String(at)) return;
+      showImage(image, cue ? { url: sprite.sprite, cue } : null);
+      clearTimeout(peekTimer);
+      peekTimer = setTimeout(async () => {
+        const url = await exactFrame(view.id, at);
+        if (url && peek.dataset.time === String(at) && !peek.hidden) showImage(image, { url });
+      }, 120);
+    };
+    rows.addEventListener("pointermove", show);
+    rows.addEventListener("pointerdown", show);
+    rows.addEventListener("pointerleave", () => { peek.hidden = true; });
+  }
+
+  // ── the scan, played back smoothly ──
+  // The page stays one server update behind: a red line glides towards the
+  // newest position at the pace the updates arrive, and the bars pop up as
+  // it passes them; an act's row (and its first mark) appears once the line
+  // reaches it. When the scan is done the line runs out to the end and the
+  // final timeline (with its narrowed-down first marks) takes over.
+  const TL_FLOOR = 0.5;
+
+  function rowElement(view, name) {
+    const row = document.createElement("div");
+    row.className = "auto-seek-tl-row is-unsure";
+    row.dataset.act = name;
+    row.innerHTML = nameButton(actLabel(name), null, false, 0) + JUDGE +
+      `<div class="auto-seek-tl-lane" data-act="${name}"><svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"></svg></div>`;
+    return row;
+  }
+
+  // An act's name: plays from where it first shows, or, for an act without
+  // a clear start, from where it looked most likely ("~" and in italics).
+  // Review mode's buttons on each row: judge the act at the playhead.
+  const JUDGE = '<span class="auto-seek-tl-judge"><button type="button" data-verdict="0" title="Not this act here (the frame you are looking at)">✗</button>' +
+    '<button type="button" data-verdict="1" title="This act is here (the frame you are looking at)">✓</button></span>';
+
+  function nameButton(label, time, sure, peak) {
+    const when = time == null ? "" : `${sure ? "" : "~"}${formatTime(time)}`;
+    const title = time == null ? "" : sure
+      ? `Play from ${formatTime(time)}, where it first shows`
+      : `No clear start: play from ${formatTime(time)}, where it looked most likely (${Math.round(100 * peak)}%)`;
+    return `<button type="button" class="auto-seek-tl-name"${time == null ? "" : ` data-jump="${time}" title="${title}"`}>` +
+      `<span class="auto-seek-tl-label">${label}</span><span class="auto-seek-tl-first">${when}</span></button>`;
+  }
+
+  function setNameButton(row, label, time, sure, peak) {
+    const holder = document.createElement("div");
+    holder.innerHTML = nameButton(label, time, sure, peak);
+    row.querySelector(".auto-seek-tl-name").replaceWith(holder.firstChild);
+  }
+
+  function addBar(svg, time, score, tl, pop) {
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", ((1000 * time) / tl.duration).toFixed(1));
+    rect.setAttribute("y", (10 * (1 - score)).toFixed(2));
+    rect.setAttribute("width", Math.max(1, (1000 * tl.spacing) / tl.duration).toFixed(1));
+    rect.setAttribute("height", (10 * score).toFixed(2));
+    if (score >= tl.threshold) rect.classList.add("hit");
+    if (pop) rect.classList.add("pop");
+    svg.appendChild(rect);
+  }
+
+  // Put a row where it belongs: acts with a start in the order they start,
+  // then the unsure ones.
+  function placeRow(list, row) {
+    const key = (element) => (element.dataset.first ? Number(element.dataset.first) : Infinity);
+    const before = [...list.children].find((other) => other !== row && key(other) > key(row));
+    list.insertBefore(row, before || null);
+  }
+
+  function revealUpTo(view, upto) {
+    const tl = view.tl;
+    const list = view.timeline?.querySelector(".auto-seek-tl-rows");
+    if (!tl || !list) return;
+    list.querySelector(".auto-seek-tl-empty")?.remove();
+    for (const [time, scores] of tl.frames) {
+      if (time <= tl.shown || time > upto) continue;
+      tl.revealed.push([time, scores]);
+      scores.forEach((percent, j) => {
+        if (j === 0) return;
+        const name = tl.acts[j];
+        const score = percent / 100;
+        let row = tl.rows.get(name);
+        if (!row && score < TL_FLOOR && !(tl.firsts[name] <= upto)) return;
+        if (!row) {
+          row = rowElement(view, name);
+          tl.rows.set(name, row);
+          const svg = row.querySelector("svg");
+          for (const [past, pastScores] of tl.revealed) {
+            addBar(svg, past, pastScores[j] / 100, tl, past === time);
+            if (pastScores[j] / 100 > (Number(row.dataset.peak) || 0)) {
+              row.dataset.peak = String(pastScores[j] / 100);
+              setNameButton(row, actLabel(name), past, false, pastScores[j] / 100);
+            }
+          }
+          placeRow(list, row);
+        } else {
+          addBar(row.querySelector("svg"), time, score, tl, true);
+        }
+        if (!row.dataset.first && score > (Number(row.dataset.peak) || 0)) {
+          row.dataset.peak = String(score);
+          setNameButton(row, actLabel(name), time, false, score);
+        }
+      });
+    }
+    // Starts the line has reached: the row moves up among the sure ones.
+    for (const [name, row] of tl.rows) {
+      const first = tl.firsts[name];
+      if (first == null || first > upto || row.dataset.first) continue;
+      row.dataset.first = String(first);
+      row.classList.remove("is-unsure");
+      setNameButton(row, actLabel(name), first, true, 0);
+      const mark = document.createElement("i");
+      mark.className = "auto-seek-tl-mark pop";
+      mark.style.left = `${((100 * first) / tl.duration).toFixed(2)}%`;
+      row.querySelector(".auto-seek-tl-lane").appendChild(mark);
+      placeRow(list, row);
+    }
+    if (view.reviews?.size && tl.rows.size !== tl.paintedRows) {
+      tl.paintedRows = tl.rows.size; // new rows: put their marks on
+      paintReviews(view);
+    }
+    tl.shown = upto;
+    const unsure = [...tl.rows.values()].filter((row) => !row.dataset.first).length;
+    const more = view.timeline.querySelector(".auto-seek-tl-more");
+    more.hidden = !unsure;
+    more.textContent = view.timeline.classList.contains("shows-more") ? "Show fewer" : `Show ${unsure} more (no clear start)`;
+  }
+
+  function animateScan(view) {
+    const tl = view.tl;
+    if (!tl || tl.raf) return;
+    let last = performance.now();
+    const step = (now) => {
+      tl.raf = null;
+      if (current !== view || view.tl !== tl) return;
+      const dt = now - last;
+      last = now;
+      tl.cursor = Math.min(tl.target, tl.cursor + tl.speed * dt);
+      revealUpTo(view, tl.cursor);
+      placeLine(view, view.timeline.querySelector(".auto-seek-tl-scanline"), tl.cursor);
+      view.timeline.querySelector(".auto-seek-tl-status").textContent =
+        `· scanning… ${Math.min(99, Math.round((100 * tl.cursor) / tl.duration))}%`;
+      if (tl.cursor >= tl.target && tl.final) { finishScan(view); return; }
+      tl.raf = requestAnimationFrame(step);
+    };
+    tl.raf = requestAnimationFrame(step);
+  }
+
+  function finishScan(view) {
+    const answer = view.tl.final;
+    view.tl = null;
+    paintTimeline(view, answer);
+    view.timeline?.querySelectorAll(".auto-seek-tl-mark").forEach((mark) => mark.classList.add("pop"));
+  }
+
+  // A new answer from the server while it scans: aim the line at its
+  // position, to arrive about when the next update is due.
+  function followScan(view, answer) {
+    const panel = ensureTimeline(view);
+    if (!panel) return;
+    const duration = answer.duration || view.duration || view.video.duration;
+    if (!(duration > 0)) return;
+    view.timelineDuration = duration;
+    view.timelineActs = answer.acts;
+    view.timelineFrames = (answer.frames || []).filter(([, scores]) => scores).sort((a, b) => a[0] - b[0]);
+    const spacing = answer.spacing || 10;
+    const now = performance.now();
+    const done = answer.state === "done" || answer.state === "failed";
+    const position = done ? duration : Math.min(duration, (answer.position || 0) + spacing);
+    let tl = view.tl;
+    if (!tl) {
+      // What was scanned before this page opened shows at once.
+      panel.querySelector(".auto-seek-tl-rows").innerHTML = "";
+      tl = view.tl = {
+        acts: answer.acts, duration, spacing, threshold: answer.threshold ?? 0.8,
+        rows: new Map(), revealed: [], shown: -1, cursor: position, target: position, speed: 0, at: now, final: null,
+      };
+      tl.frames = view.timelineFrames;
+      tl.firsts = answer.firsts || {};
+      revealUpTo(view, position);
+      if (done) { tl.final = answer; finishScan(view); return; }
+    } else {
+      tl.frames = view.timelineFrames;
+      tl.firsts = { ...(answer.firsts || {}) };
+      if (position > tl.target || done) {
+        // Paced on the last few gaps between updates, with some slack, so
+        // the line rarely catches up and stops before the next one arrives.
+        tl.gaps = [...(tl.gaps || []), Math.min(15000, Math.max(500, now - tl.at))].slice(-3);
+        const expected = 1.25 * (tl.gaps.reduce((sum, gap) => sum + gap, 0) / tl.gaps.length);
+        tl.target = Math.max(tl.target, position);
+        tl.speed = Math.max(0, tl.target - tl.cursor) / (done ? 700 : expected);
+        tl.at = now;
+      }
+      if (done) tl.final = answer;
+    }
+    if (answer.reviews) setReviews(view, answer.reviews);
+    panel.classList.add("is-scanning");
+    animateScan(view);
+  }
+
+  // ── review mode: the viewer's verdicts, as labels for training ──
+  // A tap cycles the scanned frame nearest to it: wrong (not this act
+  // here), right (it is here), cleared. Saved on the server at once.
+  function nearestFrame(view, time) {
+    const limit = view.tl?.cursor ?? Infinity;
+    let near = null;
+    for (const frame of view.timelineFrames || []) {
+      if (frame[0] <= limit && (!near || Math.abs(frame[0] - time) < Math.abs(near[0] - time))) near = frame;
+    }
+    return near;
+  }
+
+  // Mark the act at the frame on screen; the same verdict again within a
+  // second takes the mark back.
+  async function judgeHere(view, act, verdict) {
+    const time = Math.round(view.video.currentTime * 100) / 100;
+    view.reviews ||= new Map();
+    const same = [...view.reviews].find(([key, value]) => {
+      const at = Number(key.slice(key.lastIndexOf("|") + 1));
+      return key.startsWith(`${act}|`) && value === verdict && Math.abs(at - time) <= 1;
+    });
+    const at = same ? Number(same[0].slice(same[0].lastIndexOf("|") + 1)) : time;
+    const next = same ? null : verdict;
+    const save = async (value) => {
+      if (value == null) view.reviews.delete(`${act}|${at}`); else view.reviews.set(`${act}|${at}`, value);
+      paintReviews(view);
+      try {
+        const answer = await operation({ op: "review", scene_id: view.id, t: at, act, verdict: value });
+        setReviews(view, answer.reviews);
+      } catch (error) {
+        toast(view, `Couldn't save the mark: ${error.message}`);
+      }
+    };
+    await save(next);
+    const what = `${actLabel(act)} at ${formatTime(at)}`;
+    toast(view, next == null ? `Mark taken back: ${what}` : `${next ? "✓" : "✗"} ${what}`, () => save(next == null ? verdict : null));
+  }
+
+  function setReviews(view, list) {
+    view.reviews = new Map((list || []).map(([time, act, verdict]) => [`${act}|${time}`, verdict]));
+    paintReviews(view);
+  }
+
+  function paintReviews(view) {
+    const panel = view.timeline;
+    if (!panel || !view.timelineDuration) return;
+    panel.querySelectorAll(".auto-seek-tl-dot").forEach((dot) => dot.remove());
+    for (const [key, verdict] of view.reviews || []) {
+      const [act, time] = [key.slice(0, key.lastIndexOf("|")), Number(key.slice(key.lastIndexOf("|") + 1))];
+      const lane = panel.querySelector(`.auto-seek-tl-lane[data-act="${CSS.escape(act)}"]`);
+      if (!lane) continue;
+      const dot = document.createElement("i");
+      dot.className = `auto-seek-tl-dot ${verdict ? "yes" : "no"}`;
+      dot.title = `${actLabel(act)} at ${formatTime(time)}: ${verdict ? "right, it is here" : "wrong, not here"}`;
+      dot.style.left = `${((100 * time) / view.timelineDuration).toFixed(2)}%`;
+      lane.appendChild(dot);
+    }
+  }
+
   function laneSvg(points, duration, threshold, spacing) {
     // One bar per frame, a frame step wide, at a fixed place on the lane.
     const width = Math.max(1, (1000 * spacing) / duration);
@@ -1007,6 +1298,9 @@
     const panel = ensureTimeline(view);
     if (!panel) return;
     view.timelineAnswer = answer;
+    view.timelineActs = answer.acts;
+    if (answer.reviews) view.reviews = new Map(answer.reviews.map(([time, act, verdict]) => [`${act}|${time}`, verdict]));
+    view.timelineFrames = (answer.frames || []).filter(([, scores]) => scores).sort((a, b) => a[0] - b[0]);
     const rows = timelineRows(answer);
     view.timelineRows = rows;
     // The scene's length from the player when the server has none yet, so
@@ -1032,15 +1326,14 @@
     } else {
       list.innerHTML = rows.map((row) => {
         const sure = row.first != null;
-        const when = sure ? formatTime(row.first) : "no clear start";
         const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
-        return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}">` +
-          `<button type="button" class="auto-seek-tl-name"${sure ? ` data-first="${row.first}" title="Play from ${when}"` : ""}>` +
-          `${row.label} <span class="auto-seek-tl-first">${when}</span></button>` +
+        return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}>` +
+          nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak) + JUDGE +
           `<div class="auto-seek-tl-lane" data-act="${row.name}">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div>`;
       }).join("");
     }
-    placeLine(view, panel.querySelector(".auto-seek-tl-scanline"), scanning && answer.state === "scanning" ? answer.position + (answer.spacing || 10) : null);
+    placeLine(view, panel.querySelector(".auto-seek-tl-scanline"), null);
+    paintReviews(view);
     movePlayhead(view);
   }
 
@@ -1058,7 +1351,8 @@
         }
         if (current !== view) break;
         if (answer.state === "off") { view.timeline?.remove(); break; }
-        paintTimeline(view, answer);
+        if (answer.state === "scanning" || view.tl) followScan(view, answer);
+        else paintTimeline(view, answer);
         if (answer.state === "done" || answer.state === "failed") break;
         await sleep(TIMELINE_POLL_MS);
       }

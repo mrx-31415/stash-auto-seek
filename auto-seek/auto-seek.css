@@ -472,13 +472,9 @@
 }
 
 /* ── act timeline, under the player ─────────────────────────────────── */
-/* --tl-left / --tl-width: the seek bar's stretch, set by the script, so the
-   lanes line up with the seek bar and the scan chart above it. */
 .auto-seek-timeline {
   --as-tl-bar: rgba(245, 180, 0, 0.45);
   --as-tl-hit: #f5b400;
-  --tl-left: 0px;
-  --tl-width: 100%;
   position: relative;
   margin: 0.25rem 0 0.75rem;
   padding: 0.25rem 0 0.5rem;
@@ -492,13 +488,67 @@
   align-items: baseline;
   gap: 0.35rem;
   width: 100%;
-  padding: 0.25rem 0.75rem 0.25rem var(--tl-left);
+  padding: 0.25rem 0.75rem;
   border: 0;
   background: none;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
+
+.auto-seek-tl-top { display: flex; align-items: center; gap: 0.5rem; padding-right: 0.75rem; }
+.auto-seek-tl-top .auto-seek-tl-head { flex: 1; min-width: 0; }
+
+/* Review mode's switch and the marks it leaves (red: wrong, green: right). */
+.auto-seek-tl-review {
+  padding: 0.1rem 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.auto-seek-tl-review[hidden] { display: none; }
+.auto-seek-tl-review[aria-pressed="true"] { border-color: #ff3b30; background: rgba(255, 59, 48, 0.2); }
+.auto-seek-tl-review-help { margin: 0 0.75rem 0.25rem; font-size: 0.75rem; opacity: 0.8; }
+.auto-seek-tl-review-help .no { color: #ff6b61; }
+.auto-seek-tl-review-help .yes { color: #4cd964; }
+/* While reviewing, a ✗/✓ pair sits between each name and its lane. */
+.auto-seek-tl-judge { display: none; gap: 2px; }
+.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content 1fr; }
+.auto-seek-timeline.is-reviewing .auto-seek-tl-judge { display: flex; }
+.auto-seek-tl-judge button {
+  width: 1.6rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.auto-seek-tl-judge button[data-verdict="0"]:hover { background: rgba(255, 59, 48, 0.4); }
+.auto-seek-tl-judge button[data-verdict="1"]:hover { background: rgba(76, 217, 100, 0.35); }
+
+.auto-seek-tl-dot {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  border: 1px solid #000;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.auto-seek-tl-dot.no { background: #ff3b30; }
+.auto-seek-tl-dot.yes { background: #4cd964; }
 
 .auto-seek-tl-title { font-weight: 600; }
 .auto-seek-tl-status { opacity: 0.7; }
@@ -508,34 +558,47 @@
 
 .auto-seek-tl-body { position: relative; }
 
-.auto-seek-tl-row { margin-top: 0.3rem; }
-.auto-seek-tl-row.is-unsure { display: none; }
-.auto-seek-timeline.shows-more .auto-seek-tl-row.is-unsure { display: block; }
+/* Names in a column as wide as the longest one, lanes beside them: the
+   rows are "display: contents" items of one grid, so every lane starts at
+   the same place. */
+.auto-seek-tl-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  column-gap: 0.5rem;
+  row-gap: 3px;
+  padding: 0 0.75rem;
+}
 
-/* The act's name and where it first shows, on a line of its own above the lane. */
+.auto-seek-tl-row { display: contents; }
+.auto-seek-tl-row.is-unsure { display: none; }
+.auto-seek-timeline.shows-more .auto-seek-tl-row.is-unsure { display: contents; }
+
 .auto-seek-tl-name {
-  display: block;
-  margin-left: var(--tl-left);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
-  font-size: 0.8rem;
-  line-height: 1.3;
+  font-size: 0.75rem;
+  line-height: 1.15rem;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.auto-seek-tl-name:hover, .auto-seek-tl-name:focus-visible { text-decoration: underline; }
-.auto-seek-tl-first { margin-left: 0.3rem; font-variant-numeric: tabular-nums; opacity: 0.7; }
-.auto-seek-tl-row.is-unsure .auto-seek-tl-name { cursor: default; opacity: 0.75; text-decoration: none; }
+.auto-seek-tl-name:not([data-jump]) { cursor: default; }
+.auto-seek-tl-name[data-jump]:hover .auto-seek-tl-label,
+.auto-seek-tl-name[data-jump]:focus-visible .auto-seek-tl-label { text-decoration: underline; }
+.auto-seek-tl-first { font-variant-numeric: tabular-nums; opacity: 0.7; }
+.auto-seek-tl-row.is-unsure .auto-seek-tl-name { opacity: 0.7; }
 .auto-seek-tl-row.is-unsure .auto-seek-tl-first { font-style: italic; }
 
 .auto-seek-tl-lane {
   position: relative;
-  margin-left: var(--tl-left);
-  width: var(--tl-width);
-  height: 0.9rem;
+  height: 1.15rem;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
@@ -557,7 +620,7 @@
 }
 
 .auto-seek-tl-more {
-  margin: 0.4rem 0 0 var(--tl-left);
+  margin: 0.4rem 0.75rem 0;
   padding: 0;
   border: 0;
   background: none;
@@ -580,17 +643,95 @@
 
 .auto-seek-tl-playhead { background: rgba(255, 255, 255, 0.8); }
 
-/* Where the scan has got to: a glowing amber line that moves right. */
+/* Where the scan has got to: a red line gliding right (moved every frame
+   by the script, so no transition). */
 .auto-seek-tl-scanline {
   width: 2px;
   margin-left: -1px;
-  background: var(--as-tl-hit);
-  box-shadow: 0 0 6px 1px rgba(245, 180, 0, 0.7);
-  transition: left 0.9s linear;
+  background: #ff3b30;
+  box-shadow: 0 0 6px 1px rgba(255, 59, 48, 0.75);
 }
 
-.auto-seek-tl-empty { margin: 0.25rem 0 0 var(--tl-left); opacity: 0.7; }
+/* Bars and first marks pop up as the scan line passes them. */
+.auto-seek-tl-lane rect.pop {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: auto-seek-tl-pop 0.35s ease-out;
+}
+
+.auto-seek-tl-mark.pop { animation: auto-seek-tl-mark 0.5s ease-out; }
+
+@keyframes auto-seek-tl-pop {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes auto-seek-tl-mark {
+  from { opacity: 0; transform: scaleY(0.2); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+
+/* The hovered moment, above the lane. */
+.auto-seek-tl-peek {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 4px));
+  pointer-events: none;
+}
+
+.auto-seek-tl-peek[hidden] { display: none; }
+.auto-seek-tl-peek .auto-seek-strip-peek-image { display: block; border-radius: 2px; background-repeat: no-repeat; }
+
+.auto-seek-tl-empty { grid-column: 1 / -1; margin: 0.25rem 0 0; opacity: 0.7; }
 
 @media (prefers-reduced-motion: reduce) {
-  .auto-seek-tl-scanline { transition: none; }
+  .auto-seek-tl-lane rect.pop, .auto-seek-tl-mark.pop { animation: none; }
+}
+
+/* Stash's wide layout: the details column is one window tall and scrolls on
+   its own, and the player column grows with the timeline. While a timeline
+   is shown, the details column stays pinned under the navigation bar as the
+   page scrolls, instead of leaving a gap below it. */
+@media (min-width: 1200px) {
+  .row:has(> .scene-player-container .auto-seek-timeline) > .scene-tabs {
+    /* Only pinned: Stash's own height and scrolling stay as they are (a
+       height of our own made the column jump and grow a second scrollbar). */
+    position: sticky;
+    top: var(--auto-seek-tabs-top, 3.5rem);
+  }
+}
+
+/* Reviewing: the player stays in view, smaller and pinned to the top, while
+   the timeline scrolls under it; Stash's thumbnail scrubber steps aside to
+   leave the room to the video. */
+.scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer {
+  position: sticky;
+  top: var(--auto-seek-tabs-top, 3.5rem);
+  z-index: 20;
+  height: 55vh;
+  max-height: 55vh;
+  background: #000;
+}
+
+.scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer > .scrubber-wrapper {
+  display: none;
+}
+
+/* One column (phones): the page has no top bar there. */
+@media (max-width: 1199.98px) {
+  .scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer {
+    top: 0;
+    height: auto;
+    max-height: none;
+  }
 }
