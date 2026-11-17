@@ -574,6 +574,7 @@ def test_analyse_answers_from_the_cache(backend, monkeypatch):
 
 
 def test_library_task_skips_answered_scenes_and_records_failures(backend, monkeypatch):
+    monkeypatch.setattr(backend, "settings_now", lambda server: {"disableTimeline": True})
     backend.put_point({"scene_id": 1, "start": 30, "duration": 900, "model": default_id(backend)})
     backend.mark_point({"scene_id": 2, "start": 40, "duration": 900})
     pages = {1: ["1", "2", "3"], 2: ["4"]}
@@ -650,9 +651,11 @@ def test_new_scenes_queue_for_one_worker(backend, monkeypatch):
 
 
 def test_worker_drains_the_queue(backend, monkeypatch):
+    monkeypatch.setattr(backend, "settings_now", lambda server: {"disableTimeline": True})
     with backend.cache() as connection:
         connection.executemany(
-            "INSERT INTO pending VALUES (?, ?)", [("5", "a"), ("6", "b"), ("7", "c")]
+            "INSERT INTO pending (scene_id, added_at) VALUES (?, ?)",
+            [("5", "a"), ("6", "b"), ("7", "c")],
         )
     backend.put_point({"scene_id": 6, "start": 1, "duration": 9, "model": default_id(backend)})
     seen = []
@@ -796,3 +799,146 @@ def test_analysis_scores_the_stage_and_a_frame_ten_seconds_on(backend, monkeypat
     found = backend.analyse_scene("1", {})
     # The teaser frame at 360 s is not followed by kissing 10 s later.
     assert 490 <= found["start"] <= 505 and found["model"] == backend.model_id("fast", "kissing")
+
+
+def test_timeline_grid_runs_left_to_right(backend):
+    assert backend.timeline_grid(1000, 10) == [10.0 * k for k in range(100)]
+
+
+def fake_scene(backend, monkeypatch, acts_at, duration=1800, settings=None):
+    """A scene the backend cuts and scores without ffmpeg or a model: the
+    model's act scores come from acts_at(time)."""
+    cut: list[float] = []
+
+    class Session:
+        def score(self, pixels, features):
+            return 0.5, acts_at(round(features[0] * duration, 2))
+
+    settings = {} if settings is None else settings
+    monkeypatch.setattr(
+        backend,
+        "stash_query",
+        lambda *args: {
+            "findScene": {"files": [{"path": "/v.mp4", "duration": duration}]},
+            "configuration": {
+                "general": {"previewSegments": 12},
+                "plugins": {"auto-seek": settings},
+            },
+        },
+    )
+    monkeypatch.setattr(backend, "settings_now", lambda server: settings)
+    monkeypatch.setattr(backend, "scorer", lambda threads, download=True: Session())
+    monkeypatch.setattr(backend, "find_ffmpeg", lambda configured, server: "ffmpeg")
+
+    def grab(ffmpeg, path, times):
+        cut.extend(times)
+        return [b"\0\xff" * 64] * len(times)
+
+    monkeypatch.setattr(backend, "grab_frames", grab)
+    return cut, settings
+
+
+def test_timeline_finds_where_each_act_first_shows(backend, monkeypatch):
+    # Kissing from 203 s (and a one-frame flash at 100 s); cowgirl from 905 s.
+    def acts_at(t):
+        acts = [0.01] * len(backend.ACTS)
+        if t >= 203 or t == 100:
+            acts[backend.ACTS.index("kissing")] = 0.95
+        if t >= 905:
+            acts[backend.ACTS.index("cowgirl")] = 0.95
+        return acts
+
+    cut, settings = fake_scene(backend, monkeypatch, acts_at)
+    saves = []
+    save = backend.save_timeline
+    monkeypatch.setattr(
+        backend, "save_timeline", lambda *a, **k: saves.append(a[5]) or save(*a, **k)
+    )
+    row = backend.scan_timeline("1", {})
+    assert row["state"] == 1 and saves[-1] == 1 and saves.count(0) > 3  # saved as it went
+    firsts = row["firsts"]
+    assert 203 <= firsts["kissing"] <= 203 + 2.5  # not the flash at 100 s
+    assert 905 <= firsts["cowgirl"] <= 905 + 2.5
+    assert list(firsts) == ["kissing", "cowgirl"] and "oral on him" not in firsts
+    assert len(cut) < 1800 / 10 + 20  # the grid, its last partner and a few to narrow down
+    view = backend.timeline_view({"scene_id": "1"}, {})
+    assert view["state"] == "done" and view["firsts"] == firsts
+    assert len(view["acts"]) == len(backend.ACTS) and view["frames"][0][1][0] == 1  # percent
+    # A finer spacing rescans, reusing the frames it has.
+    cut.clear()
+    settings["timelineSpacing"] = 5
+    assert backend.scan_timeline("1", {})["model"].endswith("/x5+t80p10")
+    assert 1800 / 10 - 20 < len(cut) < 1800 / 10 + 20  # only the new half of the grid
+
+
+def test_timeline_view_queues_an_unscanned_scene_first(backend, monkeypatch):
+    fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
+    started = []
+    monkeypatch.setattr(backend, "start_worker", lambda server: started.append(server))
+    backend.queue_scene("9", {}, priority=0)
+    assert backend.timeline_view({"scene_id": "5"}, {"Port": 1})["state"] == "queued"
+    with backend.cache() as connection:
+        order = connection.execute(
+            "SELECT scene_id FROM pending ORDER BY priority DESC, added_at"
+        ).fetchall()
+    assert [r[0] for r in order] == ["5", "9"] and started[-1] == {"Port": 1}
+    monkeypatch.setattr(backend, "settings_now", lambda server: {"disableTimeline": True})
+    assert backend.timeline_view({"scene_id": "5"}, {}) == {"state": "off"}
+
+
+def test_the_worker_finds_the_start_then_the_timeline(backend, monkeypatch):
+    fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
+    done = []
+    monkeypatch.setattr(
+        backend, "analyse_scene", lambda scene_id, server: done.append(("start", scene_id))
+    )
+    monkeypatch.setattr(
+        backend,
+        "scan_timeline",
+        lambda scene_id, server, yields=False: done.append(("timeline", scene_id)),
+    )
+    monkeypatch.setattr(backend, "lower_priority", lambda: None)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with backend.cache() as connection:
+        connection.execute("INSERT INTO pending (scene_id, added_at) VALUES ('4', 'a')")
+    backend.worker()
+    assert done == [("start", "4"), ("timeline", "4")]
+
+
+def test_frames_from_the_start_search_dont_pass_for_a_scan(backend, monkeypatch):
+    fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
+    started = []
+    monkeypatch.setattr(backend, "start_worker", lambda server: started.append(1))
+    backend.analyse_scene("3", {})  # saves its frames to the timeline, waiting
+    assert backend.load_timeline("3")["state"] == 3
+    assert backend.timeline_view({"scene_id": "3"}, {})["state"] == "queued" and started
+
+
+def test_a_page_request_pauses_a_background_scan(backend, monkeypatch):
+    cut, _ = fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
+    monkeypatch.setattr(backend, "lower_priority", lambda: None)
+    monkeypatch.setattr(backend, "done_ids", lambda ids, model: set(ids))  # starts known
+    monkeypatch.setattr(backend, "start_worker", lambda server: None)
+    order, asked = [], []
+    scan, save = backend.scan_timeline, backend.save_timeline
+
+    def tracked(scene_id, server, yields=False):
+        order.append(scene_id)
+        return scan(scene_id, server, yields)
+
+    def saving(*args, **kwargs):
+        save(*args, **kwargs)
+        if args[0] == "1" and args[5] == 0 and not asked:
+            asked.append(1)  # a page opens scene 2 while scene 1 scans in the background
+            backend.queue_scene("2", {}, priority=2_000_000_000)
+
+    monkeypatch.setattr(backend, "scan_timeline", tracked)
+    monkeypatch.setattr(backend, "save_timeline", saving)
+    with backend.cache() as connection:
+        connection.execute("INSERT INTO pending (scene_id, added_at) VALUES ('1', 'a')")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    backend.worker()
+    assert order == ["1", "2", "1"]  # paused for scene 2, then resumed
+    assert backend.load_timeline("1")["state"] == 1 and backend.load_timeline("2")["state"] == 1
+    # Each scene's frames cut once: the resumed scan kept the frames it had.
+    assert len(cut) == 2 * len(set(cut))

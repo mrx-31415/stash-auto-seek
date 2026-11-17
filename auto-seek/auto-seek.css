@@ -470,3 +470,127 @@
     width: 100%;
   }
 }
+
+/* ── act timeline, under the player ─────────────────────────────────── */
+/* --tl-left / --tl-width: the seek bar's stretch, set by the script, so the
+   lanes line up with the seek bar and the scan chart above it. */
+.auto-seek-timeline {
+  --as-tl-bar: rgba(245, 180, 0, 0.45);
+  --as-tl-hit: #f5b400;
+  --tl-left: 0px;
+  --tl-width: 100%;
+  position: relative;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.25rem 0 0.5rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+}
+
+.auto-seek-tl-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.25rem 0.75rem 0.25rem var(--tl-left);
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auto-seek-tl-title { font-weight: 600; }
+.auto-seek-tl-status { opacity: 0.7; }
+.auto-seek-tl-chevron { margin-left: auto; transition: transform 0.15s; }
+.auto-seek-timeline.is-collapsed .auto-seek-tl-chevron { transform: rotate(-90deg); }
+.auto-seek-timeline.is-collapsed .auto-seek-tl-body { display: none; }
+
+.auto-seek-tl-body { position: relative; }
+
+.auto-seek-tl-row { margin-top: 0.3rem; }
+.auto-seek-tl-row.is-unsure { display: none; }
+.auto-seek-timeline.shows-more .auto-seek-tl-row.is-unsure { display: block; }
+
+/* The act's name and where it first shows, on a line of its own above the lane. */
+.auto-seek-tl-name {
+  display: block;
+  margin-left: var(--tl-left);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auto-seek-tl-name:hover, .auto-seek-tl-name:focus-visible { text-decoration: underline; }
+.auto-seek-tl-first { margin-left: 0.3rem; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.auto-seek-tl-row.is-unsure .auto-seek-tl-name { cursor: default; opacity: 0.75; text-decoration: none; }
+.auto-seek-tl-row.is-unsure .auto-seek-tl-first { font-style: italic; }
+
+.auto-seek-tl-lane {
+  position: relative;
+  margin-left: var(--tl-left);
+  width: var(--tl-width);
+  height: 0.9rem;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.auto-seek-tl-lane svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.auto-seek-tl-lane rect { fill: var(--as-tl-bar); }
+.auto-seek-tl-lane rect.hit { fill: var(--as-tl-hit); }
+
+.auto-seek-tl-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.auto-seek-tl-more {
+  margin: 0.4rem 0 0 var(--tl-left);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.auto-seek-tl-more:hover, .auto-seek-tl-more:focus-visible { opacity: 1; text-decoration: underline; }
+
+.auto-seek-tl-playhead,
+.auto-seek-tl-scanline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
+
+.auto-seek-tl-playhead { background: rgba(255, 255, 255, 0.8); }
+
+/* Where the scan has got to: a glowing amber line that moves right. */
+.auto-seek-tl-scanline {
+  width: 2px;
+  margin-left: -1px;
+  background: var(--as-tl-hit);
+  box-shadow: 0 0 6px 1px rgba(245, 180, 0, 0.7);
+  transition: left 0.9s linear;
+}
+
+.auto-seek-tl-empty { margin: 0.25rem 0 0 var(--tl-left); opacity: 0.7; }
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-seek-tl-scanline { transition: none; }
+}

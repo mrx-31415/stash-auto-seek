@@ -577,6 +577,28 @@ def cache() -> sqlite3.Connection:
             PRAGMA user_version = 3;
             """
         )
+    if version < 4:
+        # The act timeline: every act's score on frames across the whole
+        # scene and where each act first shows (state: 0 scanning, 1 done,
+        # 2 failed, 3 waiting: frames from the start search, or a scan
+        # paused for another scene); and pending scenes a page is waiting
+        # for go first (priority: when the page asked).
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS timeline (
+                scene_id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                duration_s REAL NOT NULL,
+                frames TEXT NOT NULL DEFAULT '[]',
+                firsts TEXT NOT NULL DEFAULT '{}',
+                state INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                updated_at TEXT NOT NULL
+            );
+            ALTER TABLE pending ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+            PRAGMA user_version = 4;
+            """
+        )
     return connection
 
 
@@ -1179,6 +1201,225 @@ def threads_setting(settings: dict) -> int:
         return 2
 
 
+class Frames:
+    """Cuts frames of one scene and scores every act on them, each frame
+    once; `acts[t]` is the scores (None for a blank grab)."""
+
+    def __init__(self, session, ffmpeg: str, path: str, duration: float):
+        self.session, self.ffmpeg, self.path, self.duration = session, ffmpeg, path, duration
+        self.acts: dict[float, list[float] | None] = {}
+        self.timings = {"cut": 0.0, "score": 0.0}
+
+    def score(self, times) -> None:
+        times = sorted({round(t, 2) for t in times} - set(self.acts))
+        if not times:
+            return
+        t0 = time.monotonic()
+        groups = [times[i : i + FRAMES_PER_RUN] for i in range(0, len(times), FRAMES_PER_RUN)]
+        if len(groups) > 1:
+            with ThreadPoolExecutor(min(FFMPEG_SLOTS, len(groups))) as pool:
+                batches = pool.map(lambda group: grab_frames(self.ffmpeg, self.path, group), groups)
+                grabs = [frame for batch in batches for frame in batch]
+        else:
+            grabs = grab_frames(self.ffmpeg, self.path, times)
+        t1 = time.monotonic()
+        d = self.duration
+        for t, pixels in zip(times, grabs, strict=True):
+            acts = None
+            if pixels is not None and not blank(pixels):
+                acts = list(self.session.score(pixels, [t / d, t / 60, d / 3600])[1])
+            self.acts[t] = acts
+        self.timings["cut"] += t1 - t0
+        self.timings["score"] += time.monotonic() - t1
+
+
+# ── act timeline ──────────────────────────────────────────────────────────
+
+# After the start, the background worker scores frames across the whole
+# scene, left to right, saving every few frames so the page follows it, and finds
+# where each act first shows: its first frame past the threshold (as sure as
+# the frame `pair_s` later, as for the start), narrowed down by bisection.
+TIMELINE = {
+    "spacing_s": 10,
+    "threshold": RULE["threshold"],
+    "pair_s": RULE["pair_s"],
+    "refine_s": 2.5,
+}
+TIMELINE_BATCH = FFMPEG_SLOTS  # saved after every few frames, so the page follows closely
+
+
+def timeline_spacing(settings: dict) -> float:
+    try:
+        value = float(settings.get("timelineSpacing") or TIMELINE["spacing_s"])
+    except (TypeError, ValueError):
+        value = TIMELINE["spacing_s"]
+    return max(2.0, min(120.0, value))
+
+
+def timeline_on(settings: dict) -> bool:
+    return settings.get("disableTimeline") is not True
+
+
+def timeline_id(size: str, spacing: float) -> str:
+    return f"{MODELS[size]['id']}/x{spacing:g}+t80p10"
+
+
+def timeline_grid(duration: float, spacing: float) -> list[float]:
+    """The scan's frames, left to right (the page shows where it has got to)."""
+    count = max(1, math.ceil((duration - 1) / spacing))
+    return [round(k * spacing, 2) for k in range(count)]
+
+
+def partner_of(t: float, duration: float, pair: float) -> float:
+    return round(max(t, min(t + pair, duration - 1)), 2)
+
+
+def act_hits(acts: dict, duration: float, rule: dict = TIMELINE) -> dict[str, tuple]:
+    """For each act: (last frame before its first hit, first hit), from the
+    frames scored so far. A hit is a frame past the threshold whose partner
+    (if scored and not blank) is too."""
+    times = sorted(t for t, a in acts.items() if a is not None)
+    out = {}
+    for j, act in enumerate(ACTS):
+        if j == 0:
+            continue  # "nothing yet" has no start
+        before = None
+        for t in times:
+            later = acts.get(partner_of(t, duration, rule["pair_s"]))
+            score = acts[t][j] if later is None else min(acts[t][j], later[j])
+            if score >= rule["threshold"]:
+                out[act] = (before, t)
+                break
+            before = t
+    return out
+
+
+def save_timeline(scene_id, model, duration, acts, firsts, state, error=None) -> None:
+    frames = [
+        [t, None if a is None else [round(100 * v) for v in a]] for t, a in sorted(acts.items())
+    ]
+    with contextlib.closing(cache()) as connection, connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO timeline (scene_id, model, duration_s, frames, firsts, state, "
+            "error, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(scene_id), model, duration, json.dumps(frames, separators=(",", ":")),
+                json.dumps(firsts), state, error, now(),
+            ),
+        )  # fmt: skip
+
+
+def load_timeline(scene_id: str) -> dict | None:
+    if not os.path.isfile(CACHE_PATH):
+        return None
+    with contextlib.closing(cache()) as connection:
+        row = connection.execute(
+            "SELECT model, duration_s, frames, firsts, state, error, updated_at FROM timeline "
+            "WHERE scene_id = ?",
+            (str(scene_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    model, duration, frames, firsts, state, error, updated = row
+    return {
+        "model": model,
+        "duration": duration,
+        "frames": json.loads(frames),
+        "firsts": json.loads(firsts),
+        "state": state,
+        "error": error,
+        "updated_at": updated,
+    }
+
+
+def stored_acts(row: dict | None, model: str) -> dict:
+    """The act scores a saved timeline holds, if the same model made them
+    (another spacing or rule still reuses its frames)."""
+    if not row or row["model"].split("/")[0] != model.split("/")[0]:
+        return {}
+    return {t: None if a is None else [v / 100 for v in a] for t, a in row["frames"]}
+
+
+class Paused(Exception):
+    """A page asked for another scene's timeline: this scan waits."""
+
+
+def page_waiting(scene_id: str) -> bool:
+    """Whether a page asked for another scene since this one was queued."""
+    with contextlib.closing(cache()) as connection:
+        own = connection.execute(
+            "SELECT priority FROM pending WHERE scene_id = ?", (scene_id,)
+        ).fetchone()
+        top = connection.execute(
+            "SELECT scene_id, priority FROM pending ORDER BY priority DESC, added_at LIMIT 1"
+        ).fetchone()
+    return bool(top and top[0] != scene_id and top[1] > (own[0] if own else 0))
+
+
+def scan_timeline(scene_id: str, server: dict, yields: bool = False) -> dict:
+    """Score the whole scene for the act timeline, saving as it goes so the
+    page can draw it live. `yields` (the background worker): stop for a
+    scene a page asked for since, keeping the frames for later."""
+    data = stash_query(server, SCENE_QUERY, {"id": scene_id})
+    files = (data.get("findScene") or {}).get("files") or []
+    if not files or not files[0].get("duration"):
+        raise ValueError("This scene has no video file")
+    path, duration = files[0]["path"], float(files[0]["duration"])
+    config = data["configuration"]
+    settings = plugin_settings(config)
+    size, _, _ = current_choice(settings)
+    spacing = timeline_spacing(settings)
+    model = timeline_id(size, spacing)
+    row = load_timeline(scene_id)
+    if row and row["model"] == model and row["state"] == 1:
+        return row
+    session = scorer(threads_setting(settings), settings.get("disableDownload") is not True)
+    ffmpeg = find_ffmpeg((config.get("general") or {}).get("ffmpegPath") or "", server)
+    frames = Frames(session, ffmpeg, path, duration)
+    frames.acts.update(stored_acts(row, model))
+    pair = TIMELINE["pair_s"]
+    try:
+        grid = timeline_grid(duration, spacing)
+        for i in range(0, len(grid), TIMELINE_BATCH):
+            batch = grid[i : i + TIMELINE_BATCH]
+            frames.score([*batch, *(partner_of(t, duration, pair) for t in batch)])
+            save_timeline(scene_id, model, duration, frames.acts, {}, 0)
+            if yields and page_waiting(scene_id):
+                save_timeline(scene_id, model, duration, frames.acts, {}, 3)
+                raise Paused(scene_id)
+        # Narrow each act's first hit down to a few seconds: one middle frame
+        # per act and round, all acts' frames cut together.
+        spans = {act: list(span) for act, span in act_hits(frames.acts, duration).items()}
+        while True:
+            open_spans = {
+                act: span
+                for act, span in spans.items()
+                if span[0] is not None and span[1] - span[0] > TIMELINE["refine_s"]
+            }
+            if not open_spans:
+                break
+            middles = {act: round((lo + hi) / 2, 2) for act, (lo, hi) in open_spans.items()}
+            frames.score(
+                [*middles.values(), *(partner_of(t, duration, pair) for t in middles.values())]
+            )
+            j_of = {act: ACTS.index(act) for act in middles}
+            for act, t in middles.items():
+                a, later = frames.acts.get(t), frames.acts.get(partner_of(t, duration, pair))
+                if a is None:
+                    spans[act][0] = t  # blank: can't tell; look later
+                    continue
+                score = a[j_of[act]] if later is None else min(a[j_of[act]], later[j_of[act]])
+                spans[act][1 if score >= TIMELINE["threshold"] else 0] = t
+        firsts = {act: span[1] for act, span in sorted(spans.items(), key=lambda kv: kv[1][1])}
+        save_timeline(scene_id, model, duration, frames.acts, firsts, 1)
+    except (FilesMissing, Paused):
+        raise
+    except Exception as error:
+        save_timeline(scene_id, model, duration, frames.acts, {}, 2, str(error)[:500])
+        raise
+    return load_timeline(scene_id) or {}
+
+
 def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     """Find the start of one scene and cache it. `eager` (someone is waiting
     for it) cuts each pass's frames in parallel."""
@@ -1205,49 +1446,30 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
             os.remove(progress_path(scene_id))
         raise
     ffmpeg = find_ffmpeg(general.get("ffmpegPath") or "", server)
-    timings = {"cut": 0.0, "score": 0.0}
+    frames = Frames(session, ffmpeg, path, duration)
+    timings = frames.timings
 
     def on_phase(name: str) -> None:
         status["phase"] = name
         if eager:
             write_progress(scene_id, duration, live, name)
 
-    frame_scores: dict[float, float | None] = {}
     pair = RULE.get("pair_s") or 0
 
     def partner(t: float) -> float:
-        return max(t, min(t + pair, duration - 1))
+        return partner_of(t, duration, pair)
 
-    def score_frames(times: list[float]) -> None:
-        """Cut and score the frames not scored yet, in parallel batches."""
-        times = sorted({t for t in times if t not in frame_scores})
-        if not times:
-            return
-        t0 = time.monotonic()
-        groups = [times[i : i + FRAMES_PER_RUN] for i in range(0, len(times), FRAMES_PER_RUN)]
-        if len(groups) > 1:
-            with ThreadPoolExecutor(min(FFMPEG_SLOTS, len(groups))) as pool:
-                batches = pool.map(lambda group: grab_frames(ffmpeg, path, group), groups)
-                grabs = [frame for batch in batches for frame in batch]
-        else:
-            grabs = grab_frames(ffmpeg, path, times)
-        t1 = time.monotonic()
-        for t, pixels in zip(times, grabs, strict=True):
-            score = None
-            if pixels is not None and not blank(pixels):
-                acts = session.score(pixels, [t / duration, t / 60, duration / 3600])[1]
-                score = stage_score(acts, stage)
-            frame_scores[t] = score
-        timings["cut"] += t1 - t0
-        timings["score"] += time.monotonic() - t1
+    def stage_at(t: float) -> float | None:
+        acts = frames.acts[round(t, 2)]
+        return None if acts is None else stage_score(acts, stage)
 
     def score_at(times: list[float]) -> list[float | None]:
         # Each frame with its partner a few seconds later: a frame is only as
         # sure as the less sure of the two (a blank partner doesn't count).
-        score_frames([*times, *(partner(t) for t in times)] if pair else times)
+        frames.score([*times, *(partner(t) for t in times)] if pair else times)
         out: list[float | None] = []
         for t in times:
-            score, later = frame_scores[t], frame_scores[partner(t)] if pair else None
+            score, later = stage_at(t), stage_at(partner(t)) if pair else None
             if score is not None and later is not None:
                 score = min(score, later)
             if score is not None:
@@ -1276,6 +1498,14 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     )
     with contextlib.closing(cache()) as connection, connection:
         connection.execute("DELETE FROM failure WHERE scene_id = ?", (scene_id,))
+    # The frames the search scored start the scene's timeline off.
+    if timeline_on(settings):
+        with contextlib.suppress(sqlite3.Error, OSError):
+            model = timeline_id(size_of(settings), timeline_spacing(settings))
+            row = load_timeline(scene_id)
+            if not (row and row["model"] == model and row["state"] == 1):
+                seed = stored_acts(row, model) | frames.acts
+                save_timeline(scene_id, model, duration, seed, {}, 3)
     return {
         "start": start,
         "duration": duration,
@@ -1403,7 +1633,8 @@ def library_task(args: dict, server: dict) -> dict:
     newest first, one at a time at low priority. Stopping it loses nothing:
     each answer is saved as it is found."""
     lower_priority()
-    current_id = current_choice(settings_now(server))[2]
+    settings = settings_now(server)
+    current_id = current_choice(settings)[2]
     ids: list[str] = []
     page = 1
     while True:
@@ -1415,21 +1646,20 @@ def library_task(args: dict, server: dict) -> dict:
     done = set()
     for i in range(0, len(ids), 500):
         done |= done_ids(ids[i : i + 500], current_id)
-    todo = [scene_id for scene_id in ids if scene_id not in done]
+    todo = [
+        scene_id
+        for scene_id in ids
+        if scene_id not in done or not timeline_done(scene_id, settings)
+    ]
     analysed = failed = 0
     started = time.monotonic()
     progress(0, f"Auto Seek: {len(todo)} of {len(ids)} scenes to analyse")
     for n, scene_id in enumerate(todo, 1):
-        if scene_id in done_ids([scene_id], current_id):
-            continue  # the worker or the player got there first
-        try:
-            analyse_scene(scene_id, server)
-            analysed += 1
-        except Exception as error:  # one bad file must not stop the run
-            if isinstance(error, FilesMissing) or "can't run" in str(error):
-                raise
-            record_failure(scene_id, error, current_id)
-            failed += 1
+        # One bad file must not stop the run; the worker or the player may
+        # have got there first.
+        did = work_on(scene_id, server, settings)
+        analysed += did not in ("", "failed")
+        failed += did == "failed"
         if n % 10 == 0 or n == len(todo):
             rate = (time.monotonic() - started) / n
             progress(n / len(todo), f"Auto Seek: {n}/{len(todo)} scenes, {rate:.1f} s each")
@@ -1483,6 +1713,41 @@ def start_worker(server: dict) -> None:
     child.stdin.close()
 
 
+def timeline_done(scene_id: str, settings: dict) -> bool:
+    """Off, or scanned (or failed) with the current model and spacing."""
+    if not timeline_on(settings):
+        return True
+    row = load_timeline(scene_id)
+    model = timeline_id(size_of(settings), timeline_spacing(settings))
+    return bool(row and row["model"] == model and row["state"] in (1, 2))
+
+
+def work_on(scene_id: str, server: dict, settings: dict, yields: bool = False) -> str:
+    """The background's work on one scene: its start if it has none, then
+    its timeline. Returns what was done; a failure is recorded, not raised
+    (except missing model files)."""
+    current_id = current_choice(settings)[2]
+    did = ""
+    if scene_id not in done_ids([scene_id], current_id):
+        try:
+            analyse_scene(scene_id, server)
+            did = "start"
+        except Exception as error:
+            if isinstance(error, FilesMissing) or "can't run" in str(error):
+                raise
+            record_failure(scene_id, error, current_id)
+            return "failed"
+    if not timeline_done(scene_id, settings):
+        try:
+            scan_timeline(scene_id, server, yields)
+            did += "+timeline"
+        except Exception as error:
+            if isinstance(error, (FilesMissing, Paused)) or "can't run" in str(error):
+                raise
+            return "failed"  # kept in the timeline row (state 2)
+    return did
+
+
 def worker() -> None:
     """Analyse queued scenes until none are left. One worker at a time."""
     server = json.loads(sys.stdin.read() or "{}")
@@ -1493,21 +1758,83 @@ def worker() -> None:
         while True:
             with contextlib.closing(cache()) as connection:
                 row = connection.execute(
-                    "SELECT scene_id FROM pending ORDER BY added_at LIMIT 1"
+                    "SELECT scene_id FROM pending ORDER BY priority DESC, added_at LIMIT 1"
                 ).fetchone()
             if row is None:
                 return
             scene_id = row[0]
-            current_id = current_choice(settings_now(server))[2]
-            if scene_id not in done_ids([scene_id], current_id):
-                try:
-                    analyse_scene(scene_id, server)
-                except Exception as error:
-                    if isinstance(error, FilesMissing):
-                        return  # the queue keeps it for the next new scene
-                    record_failure(scene_id, error, current_id)
+            settings = settings_now(server)
+            try:
+                work_on(scene_id, server, settings, yields=True)
+            except FilesMissing:
+                return  # the queue keeps it for the next new scene
+            except Paused:
+                continue  # it stays queued, behind the scene a page asked for
             with contextlib.closing(cache()) as connection, connection:
                 connection.execute("DELETE FROM pending WHERE scene_id = ?", (scene_id,))
+
+
+def queue_scene(scene_id: str, server: dict, priority: int = 0) -> None:
+    with contextlib.closing(cache()) as connection, connection:
+        connection.execute(
+            "INSERT INTO pending (scene_id, added_at, priority) VALUES (?, ?, ?) "
+            "ON CONFLICT(scene_id) DO UPDATE SET priority = max(priority, excluded.priority)",
+            (scene_id, now(), priority),
+        )
+    start_worker(server)
+
+
+TIMELINE_STALE_SECONDS = 120
+
+
+def timeline_view(args: dict, server: dict) -> dict:
+    """The page's timeline: the frames scanned so far with every act's score
+    (in percent), where each act first shows, and whether the scan is still
+    running. A scene not scanned yet is queued first in line."""
+    scene_id = str(args["scene_id"])
+    settings = settings_now(server)
+    if not timeline_on(settings):
+        return {"state": "off"}
+    row = load_timeline(scene_id)
+    model = timeline_id(size_of(settings), timeline_spacing(settings))
+    current = bool(row and row["model"] == model)
+    fresh = bool(
+        row
+        and (
+            datetime.now(UTC) - datetime.strptime(row["updated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        ).total_seconds()
+        < TIMELINE_STALE_SECONDS
+    )  # fmt: skip
+    if current and row["state"] in (1, 2):
+        state = "done" if row["state"] == 1 else "failed"
+    else:
+        scanning = current and fresh and row["state"] == 0
+        state = "scanning" if scanning else "queued"
+        if not scanning and args.get("queue", True):
+            # The scene asked for most recently goes first.
+            queue_scene(scene_id, server, priority=int(time.time()))
+    shown = row if current else None  # another model's frames don't show
+    frames = shown["frames"] if shown else []
+    firsts = shown["firsts"] if shown and state == "done" else {}
+    if shown and state != "done":  # so far: each act's first frame past the threshold
+        acts = {t: None if a is None else [v / 100 for v in a] for t, a in frames}
+        firsts = {act: hit for act, (_, hit) in act_hits(acts, shown["duration"]).items()}
+    duration = shown["duration"] if shown else None
+    grid = set(timeline_grid(duration, timeline_spacing(settings))) if duration else set()
+    return {
+        "state": state,
+        "error": shown["error"] if shown and state == "failed" else None,
+        "duration": duration,
+        "spacing": timeline_spacing(settings),
+        "threshold": TIMELINE["threshold"],
+        "acts": list(ACTS),
+        "frames": frames,
+        "firsts": firsts,
+        "planned": len(grid),
+        "scanned": len(grid & {t for t, _ in frames}),
+        # How far along the scene the scan has got (it goes left to right).
+        "position": max(grid & {t for t, _ in frames}, default=0),
+    }
 
 
 def mark_point(args: dict) -> dict:
@@ -1549,6 +1876,7 @@ OPERATIONS = {
     "get": lambda args, server: get_points(args),
     "analyse": analyse,
     "progress": lambda args, server: scan_progress(args),
+    "timeline": timeline_view,
     "frame": frame_preview,
     "mark": lambda args, server: mark_point(args),
     "unmark": lambda args, server: unmark_point(args),
