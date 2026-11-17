@@ -110,8 +110,17 @@ CHOICE_PATH = os.path.join(DATA_DIR, "choice.json")
 
 def stage_of(settings: dict) -> str:
     """The start-stage setting: a free-text field, read leniently ("Kissing
-    or later", "sex positions", ...)."""
+    or later", "sex positions", ...), or the settings page's own pick of acts
+    ("acts: kissing, cowgirl"), kept as "acts:" and their indexes in ACTS. A
+    pick that matches a stage is that stage, so its starts stay cached."""
     text = str(settings.get("startStage") or "").strip().lower()
+    if text.startswith("acts:"):
+        names = {name.strip() for name in text[5:].split(",")}
+        picked = tuple(act for act in ACTS[1:] if act in names)
+        if not picked:
+            return DEFAULT_STAGE
+        same = next((key for key, acts in STAGES.items() if set(acts) == set(picked)), None)
+        return same or "acts:" + "-".join(str(ACTS.index(act)) for act in picked)
     for key in ("anything", "foreplay", "kissing", "oral", "sex", "position"):
         if text.startswith(key) or key in text.split():
             return "sex" if key == "position" else key
@@ -1135,11 +1144,18 @@ def scorer(threads: int, download: bool = True) -> ort_api.Session:
     return _scorer[key]
 
 
+def stage_acts(stage: str) -> tuple[str, ...]:
+    """The acts a stage from stage_of() counts as started."""
+    if stage.startswith("acts:"):
+        return tuple(ACTS[int(index)] for index in stage[5:].split("-"))
+    return STAGES[stage]
+
+
 def stage_score(acts: list[float], stage: str) -> float:
     """The chance that a frame shows any of the stage's acts, from the
     model's chance for each act."""
     missing = 1.0
-    for act in STAGES[stage]:
+    for act in stage_acts(stage):
         missing *= 1 - acts[ACTS.index(act)]
     return 1 - missing
 

@@ -33,7 +33,7 @@ hooks:
 settings:
   startStage:
     displayName: Start at
-    description: "What counts as the start: kissing (kissing or later), oral (oral, hands or sex; the default) or sex (sex positions). Experimental: foreplay (foreplay or later, not tease) and anything (tease included). Changing it works the start points out again."
+    description: "What counts as the start: kissing (kissing or later), oral (oral, hands or sex; the default) or sex (sex positions). Experimental: foreplay (foreplay or later, not tease), anything (tease included), or your own acts as \"acts: kissing, cowgirl\". On Stash 0.27 or later this is a dropdown with a searchable list of acts instead. Changing it works the start points out again."
     type: STRING
   accurateModel:
     displayName: Use the accurate model
