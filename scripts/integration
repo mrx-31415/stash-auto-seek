@@ -49,6 +49,8 @@ echo "[integration] building the plugin …"
 python3 scripts/build.py >/dev/null
 mkdir -p "$STASH_CONFIG"/{generated,cache,blobs} "$plugin" "$STASH_MEDIA"
 unzip -oq "dist/$PLUGIN_ID.zip" -d "$plugin"
+# The development plugin (never in a release) beside it, as on a development Stash.
+rm -rf "$STASH_CONFIG/plugins/$PLUGIN_ID-dev" && cp -r "$PLUGIN_ID-dev" "$STASH_CONFIG/plugins/$PLUGIN_ID-dev"
 cp tests/integration/stash-config.yml "$STASH_CONFIG/config.yml"
 if [[ -n "${AUTO_SEEK_FILES:-}" && -f "$AUTO_SEEK_FILES/verified.json" ]]; then
   echo "[integration] reusing the model and runtime from $AUTO_SEEK_FILES"

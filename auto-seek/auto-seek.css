@@ -499,57 +499,6 @@
 .auto-seek-tl-top { display: flex; align-items: center; gap: 0.5rem; padding-right: 0.75rem; }
 .auto-seek-tl-top .auto-seek-tl-head { flex: 1; min-width: 0; }
 
-/* Review mode's switch and the marks it leaves (red: wrong, green: right). */
-.auto-seek-tl-review {
-  padding: 0.1rem 0.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 999px;
-  background: none;
-  color: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.auto-seek-tl-review[hidden] { display: none; }
-.auto-seek-tl-review[aria-pressed="true"] { border-color: #ff3b30; background: rgba(255, 59, 48, 0.2); }
-.auto-seek-tl-review-help { margin: 0 0.75rem 0.25rem; font-size: 0.75rem; opacity: 0.8; }
-.auto-seek-tl-review-help .no { color: #ff6b61; }
-.auto-seek-tl-review-help .yes { color: #4cd964; }
-/* While reviewing, a ✗/✓ pair sits between each name and its lane. */
-.auto-seek-tl-judge { display: none; gap: 2px; }
-.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content 1fr; }
-.auto-seek-timeline.is-reviewing .auto-seek-tl-judge { display: flex; }
-.auto-seek-tl-judge button {
-  width: 1.6rem;
-  height: 1.15rem;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.05);
-  color: inherit;
-  font-size: 0.75rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.auto-seek-tl-judge button[data-verdict="0"]:hover { background: rgba(255, 59, 48, 0.4); }
-.auto-seek-tl-judge button[data-verdict="1"]:hover { background: rgba(76, 217, 100, 0.35); }
-
-.auto-seek-tl-dot {
-  position: absolute;
-  top: 50%;
-  z-index: 3;
-  width: 9px;
-  height: 9px;
-  margin: -5px 0 0 -5px;
-  border: 1px solid #000;
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.auto-seek-tl-dot.no { background: #ff3b30; }
-.auto-seek-tl-dot.yes { background: #4cd964; }
-
 .auto-seek-tl-title { font-weight: 600; }
 .auto-seek-tl-status { opacity: 0.7; }
 .auto-seek-tl-chevron { margin-left: auto; transition: transform 0.15s; }
@@ -705,104 +654,6 @@
 
 .auto-seek-tl-empty { grid-column: 1 / -1; margin: 0.25rem 0 0; opacity: 0.7; }
 
-/* Review mode: the marks so far, below the timeline, as a grid of frames. */
-.auto-seek-tl-marks { display: none; margin: 0.5rem 0.75rem 0; }
-.auto-seek-timeline.is-reviewing .auto-seek-tl-marks:not([hidden]) { display: block; }
-.auto-seek-timeline.is-collapsed .auto-seek-tl-marks { display: none; }
-
-.auto-seek-tl-marks > summary {
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  user-select: none;
-}
-
-.auto-seek-tl-marks-count {
-  margin-left: 0.25rem;
-  font-weight: 400;
-  opacity: 0.7;
-}
-
-.auto-seek-tl-marks-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
-  gap: 0.5rem;
-  margin-top: 0.4rem;
-}
-
-.auto-seek-mark-card {
-  position: relative;
-  margin: 0;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  overflow: hidden;
-}
-
-.auto-seek-mark-card.yes { box-shadow: inset 0 -2px 0 #4cd964; }
-.auto-seek-mark-card.no { box-shadow: inset 0 -2px 0 #ff3b30; }
-
-.auto-seek-mark-shot {
-  position: relative;
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  padding: 0;
-  border: 0;
-  background: rgba(0, 0, 0, 0.35);
-  cursor: pointer;
-}
-
-.auto-seek-mark-shot img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.auto-seek-mark-shot img[hidden] { display: none; }
-
-.auto-seek-mark-time {
-  position: absolute;
-  left: 4px;
-  bottom: 4px;
-  padding: 0 4px;
-  border-radius: 2px;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.auto-seek-mark-card figcaption {
-  padding: 0.2rem 0.4rem 0.3rem;
-  overflow: hidden;
-  font-size: 0.75rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.auto-seek-mark-card.yes figcaption b { color: #4cd964; }
-.auto-seek-mark-card.no figcaption b { color: #ff3b30; }
-
-.auto-seek-mark-remove {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 1.5rem;
-  height: 1.5rem;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.auto-seek-mark-remove:hover,
-.auto-seek-mark-remove:focus-visible { background: #ff3b30; }
-
 @media (prefers-reduced-motion: reduce) {
   .auto-seek-tl-lane rect.pop, .auto-seek-tl-mark.pop { animation: none; }
 }
@@ -817,30 +668,5 @@
        height of our own made the column jump and grow a second scrollbar). */
     position: sticky;
     top: var(--auto-seek-tabs-top, 3.5rem);
-  }
-}
-
-/* Reviewing: the player stays in view, smaller and pinned to the top, while
-   the timeline scrolls under it; Stash's thumbnail scrubber steps aside to
-   leave the room to the video. */
-.scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer {
-  position: sticky;
-  top: var(--auto-seek-tabs-top, 3.5rem);
-  z-index: 20;
-  height: 55vh;
-  max-height: 55vh;
-  background: #000;
-}
-
-.scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer > .scrubber-wrapper {
-  display: none;
-}
-
-/* One column (phones): the page has no top bar there. */
-@media (max-width: 1199.98px) {
-  .scene-player-container:has(.auto-seek-timeline.is-reviewing) > .VideoPlayer {
-    top: 0;
-    height: auto;
-    max-height: none;
   }
 }

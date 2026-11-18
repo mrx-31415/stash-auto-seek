@@ -600,9 +600,10 @@ def cache() -> sqlite3.Connection:
             """
         )
     if version < 5:
-        # The viewer's verdicts on the timeline (review mode): an act is or
-        # isn't on the frame at `t`, with the model and its score then. They
-        # are labels for training a better model.
+        # The viewer's verdicts on the timeline: an act is or isn't on the
+        # frame at `t`, with the model and its score then; labels for training
+        # a better model. Written by the development plugin (auto-seek-dev/,
+        # not in releases); kept here so its marks live in this one cache.
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS act_review (
@@ -1842,7 +1843,6 @@ def timeline_view(args: dict, server: dict) -> dict:
     grid = set(timeline_grid(duration, timeline_spacing(settings))) if duration else set()
     return {
         "state": state,
-        "reviews": reviews_of(scene_id),
         "error": shown["error"] if shown and state == "failed" else None,
         "duration": duration,
         "spacing": timeline_spacing(settings),
@@ -1855,48 +1855,6 @@ def timeline_view(args: dict, server: dict) -> dict:
         # How far along the scene the scan has got (it goes left to right).
         "position": max(grid & {t for t, _ in frames}, default=0),
     }
-
-
-def review_act(args: dict) -> dict:
-    """Review mode: the viewer says an act is (verdict 1) or isn't (0) on
-    the scanned frame at `t`; no verdict takes the mark back."""
-    scene_id, act = str(args["scene_id"]), str(args["act"])
-    if act not in ACTS[1:]:
-        raise ValueError(f"unknown act: {act!r}")
-    t = round(float(args["t"]), 2)
-    verdict = args.get("verdict")
-    with contextlib.closing(cache()) as connection, connection:
-        if verdict is None:
-            connection.execute(
-                "DELETE FROM act_review WHERE scene_id = ? AND t = ? AND act = ?",
-                (scene_id, t, act),
-            )
-        else:
-            # The model's score on the scanned frame nearest to it, if close.
-            row = load_timeline(scene_id) or {}
-            near = min(row.get("frames", []), key=lambda frame: abs(frame[0] - t), default=None)
-            acts = near[1] if near and near[1] and abs(near[0] - t) <= 6 else None
-            score = acts[ACTS.index(act)] if acts else None
-            connection.execute(
-                "INSERT OR REPLACE INTO act_review VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    scene_id, t, act, 1 if verdict else 0, row.get("model", ""),
-                    None if score is None else score / 100, now(),
-                ),
-            )  # fmt: skip
-    return {"reviews": reviews_of(scene_id)}
-
-
-def reviews_of(scene_id: str) -> list:
-    if not os.path.isfile(CACHE_PATH):
-        return []
-    with contextlib.closing(cache()) as connection:
-        return [
-            list(row)
-            for row in connection.execute(
-                "SELECT t, act, verdict FROM act_review WHERE scene_id = ? ORDER BY t", (scene_id,)
-            )
-        ]
 
 
 def mark_point(args: dict) -> dict:
@@ -1939,7 +1897,6 @@ OPERATIONS = {
     "analyse": analyse,
     "progress": lambda args, server: scan_progress(args),
     "timeline": timeline_view,
-    "review": lambda args, server: review_act(args),
     "frame": frame_preview,
     "mark": lambda args, server: mark_point(args),
     "unmark": lambda args, server: unmark_point(args),
