@@ -68,17 +68,17 @@ def test_the_playhead_is_a_line_that_brightens_while_playing(
     assert errors == []
 
 
-def test_next_peak_steps_through_an_acts_peaks(page, base_url, timeline, errors) -> None:
+def test_the_name_steps_through_the_act(page, base_url, timeline, errors) -> None:
     open_timeline(page, base_url, timeline)
-    step = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-next")
-    step.click()
-    assert current_time(page) == pytest.approx(10, abs=0.5)
-    page.locator(".video-js video").evaluate("video => video.pause()")
-    step.click()
-    assert current_time(page) == pytest.approx(30, abs=0.5)
-    page.locator(".video-js video").evaluate("video => video.pause()")
-    step.click()
-    expect(page.locator(".auto-seek-toast").first).to_contain_text("No later peak of Kissing")
+    video = page.locator(".video-js video")
+    name = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-name")
+    # Where it starts (5 s, standing for the first stretch), the next
+    # stretch's peak (30 s), then round to the start again.
+    for expected, text in ((5, "Kissing 1/2 · 0:05"), (30, "Kissing 2/2 · 0:30"), (5, "(back to the first)")):
+        name.click()
+        expect(page.locator(".auto-seek-toast").first).to_contain_text(text)
+        assert current_time(page) == pytest.approx(expected, abs=0.5)
+        video.evaluate("video => video.pause()")
     assert errors == []
 
 
@@ -88,21 +88,57 @@ def test_reviewing_keeps_a_paused_video_paused(
     configure(enableReview=True)
     open_timeline(page, base_url, timeline)
     video = page.locator(".video-js video")
+    name = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-name")
     # Outside review mode a tap plays from there.
-    page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-next").click()
+    name.click()
     page.wait_for_function("() => !document.querySelector('.video-js video').paused")
     video.evaluate("video => video.pause()")
     page.locator(".auto-seek-tl-review").click()
-    # While reviewing: the act's name, its next peak and its lane all move
-    # the video without starting it.
-    page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-name").click()
-    assert current_time(page) == pytest.approx(5, abs=0.5)
-    page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-next").click()
-    assert current_time(page) == pytest.approx(10, abs=0.5)
+    # While reviewing: the act's name and its lane move the video without
+    # starting it.
+    name.click()
+    assert current_time(page) == pytest.approx(30, abs=0.5)
     lane = page.locator(".auto-seek-tl-lane[data-act='kissing']")
     box = lane.bounding_box()
-    page.mouse.click(box["x"] + box["width"] * 0.75, box["y"] + box["height"] / 2)
-    assert current_time(page) > 20
+    page.mouse.click(box["x"] + box["width"] * 0.25, box["y"] + box["height"] / 2)
+    assert current_time(page) < 20
     page.wait_for_timeout(500)
     assert video.evaluate("video => video.paused")
+    assert errors == []
+
+
+def test_marks_show_as_frames_below_the_timeline(
+    page, base_url, timeline, configure, operation, errors
+) -> None:
+    configure(enableReview=True)
+    open_timeline(page, base_url, timeline)
+    page.locator(".auto-seek-tl-review").click()
+    marks = page.locator(".auto-seek-tl-marks")
+    expect(marks).to_be_hidden()  # none yet
+    name = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-name")
+    name.click()  # to 5 s
+    page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-judge button[data-verdict='1']").click()
+    name.click()  # to 30 s
+    page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-judge button[data-verdict='0']").click()
+    expect(marks).to_be_visible()
+    expect(marks.locator(".auto-seek-tl-marks-count")).to_have_text("2")
+    cards = marks.locator(".auto-seek-mark-card")
+    expect(cards).to_have_count(2)
+    expect(cards.nth(0).locator("figcaption")).to_have_text("✓ Kissing")
+    expect(cards.nth(0).locator(".auto-seek-mark-time")).to_have_text("0:05")
+    expect(cards.nth(1)).to_have_class("auto-seek-mark-card no")
+    # The exact frame, cut by the server.
+    expect(cards.nth(0).locator("img")).to_be_visible(timeout=20_000)
+    # A tap on the frame goes there and leaves the video paused.
+    cards.nth(0).locator(".auto-seek-mark-shot").click()
+    assert current_time(page) == pytest.approx(5, abs=0.5)
+    assert page.locator(".video-js video").evaluate("video => video.paused")
+    # × takes the mark back, on the server too.
+    cards.nth(0).locator(".auto-seek-mark-remove").click()
+    expect(cards).to_have_count(1)
+    expect(page.locator(".auto-seek-toast").first).to_contain_text("Mark taken back: Kissing at 0:05")
+    cards.nth(0).locator(".auto-seek-mark-remove").click()
+    expect(marks).to_be_hidden()
+    page.wait_for_timeout(500)
+    assert operation(op="timeline", scene_id=timeline["id"], queue=False)["reviews"] == []
     assert errors == []

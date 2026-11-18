@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, "../../auto-seek/auto-seek.j
 const context = { Math, String, Number, parseFloat };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf("  // ── pure helpers"), source.indexOf("  // ── end pure helpers")), context);
-const { formatTime, parseVtt, spriteCue, timelineRows, nextPeak } = context;
+const { formatTime, parseVtt, spriteCue, timelineRows, actStops, nextStop } = context;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // Times on the toasts and the pill: m:ss, with hours when needed.
@@ -36,15 +36,19 @@ assert.equal(spriteCue(cues, 5).x, 0);
   assert.deepEqual(plain(rows[1].points), [[0, 0], [20, 0.05], [60, 0.95]]); // time order, blank frames skipped
 }
 
-// Next peak: one per stretch at or above the floor (a one-frame dip doesn't
-// split a stretch); from before a peak that peak, from on it the next one.
+// An act name's stops: one per stretch at or above the floor (a one-frame
+// dip doesn't split a stretch), at its peak, except where the act clearly
+// starts; stepping goes on from the playhead and wraps round to the first.
 {
   const points = [[0, 0.1], [10, 0.6], [20, 0.9], [30, 0.4], [40, 0.7], [50, 0.2], [60, 0.1], [70, 0.8], [80, 0.95], [90, 0.3]];
-  assert.equal(nextPeak(points, 0), 20);
-  assert.equal(nextPeak(points, 15), 20);
-  assert.equal(nextPeak(points, 20), 80); // 30 s dips for one frame only: still the first stretch
-  assert.equal(nextPeak(points, 20.3), 80); // the playhead just past a peak
-  assert.equal(nextPeak(points, 80), null);
-  assert.equal(nextPeak([[0, 0.9], [10, 0.1], [20, 0.1], [30, 0.6]], 0), 30);
-  assert.equal(nextPeak([], 0), null);
+  assert.deepEqual(plain(actStops(points)), [20, 80]); // 30 s dips for one frame only
+  assert.deepEqual(plain(actStops(points, 8)), [8, 80]); // the start stands for its stretch
+  assert.deepEqual(plain(actStops(points, 65)), [20, 65]); // just before the second stretch
+  assert.deepEqual(plain(actStops([[0, 0.9], [10, 0.1], [20, 0.1], [30, 0.6]])), [0, 30]);
+  assert.deepEqual(plain(actStops([], 12)), [12]);
+  assert.deepEqual(plain(actStops([])), []);
+  assert.deepEqual(plain(nextStop([8, 80], 0)), { time: 8, index: 0, wrapped: false });
+  assert.deepEqual(plain(nextStop([8, 80], 8.2)), { time: 80, index: 1, wrapped: false }); // just past a stop
+  assert.deepEqual(plain(nextStop([8, 80], 80)), { time: 8, index: 0, wrapped: true });
+  assert.equal(nextStop([], 0), null);
 }

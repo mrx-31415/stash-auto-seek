@@ -173,26 +173,41 @@
     return rows.sort((a, b) => (a.first ?? Infinity) - (b.first ?? Infinity) || b.peak - a.peak);
   }
 
-  // The next peak of an act after `after` seconds: its points ([time,
-  // score], in time order) fall into stretches at or above `floor` (a single
-  // frame dipping below doesn't end one), and each stretch peaks once. From
-  // before a peak that peak is next; from on it, the following stretch's.
-  function nextPeak(points, after, floor = 0.5) {
-    const peaks = [];
-    let best = null;
+  // Where tapping an act's name steps to. Its points ([time, score], in
+  // time order) fall into stretches at or above `floor` (a single frame
+  // dipping below doesn't end one); each stretch is one stop, at its peak,
+  // except the stretch where the act clearly starts (`first`), which stops
+  // there. Sorted, in seconds.
+  function actStops(points, first = null, floor = 0.5) {
+    const stretches = [];
+    let open = null;
     let below = 0;
     for (const [time, score] of points) {
       if (score >= floor) {
-        if (!best || score > best[1]) best = [time, score];
+        if (!open) open = { end: time, peak: [time, score] };
+        open.end = time;
+        if (score > open.peak[1]) open.peak = [time, score];
         below = 0;
-      } else if (best && ++below > 1) {
-        peaks.push(best);
-        best = null;
+      } else if (open && ++below > 1) {
+        stretches.push(open);
+        open = null;
       }
     }
-    if (best) peaks.push(best);
-    const next = peaks.find(([time]) => time > after + 0.5);
-    return next ? next[0] : null;
+    if (open) stretches.push(open);
+    const stops = stretches.map((stretch) => stretch.peak[0]);
+    if (first != null) {
+      const holds = stretches.findIndex((stretch) => stretch.end >= first);
+      if (holds >= 0 && stretches[holds].peak[0] >= first - 15) stops[holds] = first;
+      else stops.push(first);
+    }
+    return [...new Set(stops)].sort((a, b) => a - b);
+  }
+
+  // The stop after `after` seconds; after the last, back to the first.
+  function nextStop(stops, after) {
+    const index = stops.findIndex((time) => time > after + 0.5);
+    if (index >= 0) return { time: stops[index], index, wrapped: false };
+    return stops.length ? { time: stops[0], index: 0, wrapped: true } : null;
   }
 
   // ── end pure helpers ───────────────────────────────────────────────────
@@ -939,7 +954,9 @@
       '<div class="auto-seek-tl-body"><div class="auto-seek-tl-rows"></div>' +
       '<button type="button" class="auto-seek-tl-more" hidden></button>' +
       '<span class="auto-seek-tl-scanline" hidden></span><span class="auto-seek-tl-playhead" hidden></span>' +
-      '<div class="auto-seek-tl-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-tl-peek-text"></span></div></div>';
+      '<div class="auto-seek-tl-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-tl-peek-text"></span></div></div>' +
+      '<details class="auto-seek-tl-marks" hidden><summary>Your marks <span class="auto-seek-tl-marks-count"></span></summary>' +
+      '<div class="auto-seek-tl-marks-grid"></div></details>';
     const head = panel.querySelector(".auto-seek-tl-head");
     head.setAttribute("aria-expanded", String(!panel.classList.contains("is-collapsed")));
     head.addEventListener("click", () => {
@@ -960,25 +977,34 @@
       review.setAttribute("aria-pressed", String(view.reviewing));
       panel.classList.toggle("is-reviewing", view.reviewing);
       panel.querySelector(".auto-seek-tl-review-help").hidden = !view.reviewing;
+      loadMarkFrames(view);
     });
     const rows = panel.querySelector(".auto-seek-tl-rows");
-    // A tap on a lane plays from there; on an act's name, from where it first
-    // shows; on its ›, from its next peak. While reviewing, a paused video
-    // stays paused, so the frame can be judged before it moves on.
+    // A tap on a lane plays from there; on an act's name, from the act's next
+    // stop (where it starts, then each later peak, then round again). While
+    // reviewing, a paused video stays paused, so the frame can be judged.
     rows.addEventListener("click", (event) => {
       if (current !== view) return;
       const name = event.target.closest(".auto-seek-tl-name");
       const lane = event.target.closest(".auto-seek-tl-lane");
       const judge = event.target.closest(".auto-seek-tl-judge button");
-      const peak = event.target.closest(".auto-seek-tl-next");
       if (judge) { judgeHere(view, judge.closest(".auto-seek-tl-row").dataset.act, Number(judge.dataset.verdict)); return; }
       let time = null;
-      if (peak) {
-        const act = peak.closest(".auto-seek-tl-row").dataset.act;
-        time = nextPeakOf(view, act);
-        if (time == null) { toast(view, `No later peak of ${actLabel(act)}`); return; }
-      } else if (name?.dataset.jump) time = Number(name.dataset.jump);
-      else if (lane && view.timelineDuration) {
+      if (name) {
+        const act = name.closest(".auto-seek-tl-row").dataset.act;
+        const stops = stopsOf(view, act);
+        const stop = nextStop(stops, view.video.currentTime);
+        if (!stop) return;
+        const before = view.video.currentTime;
+        seekPlayer(view, stop.time);
+        view.userSeeked = true;
+        if (view.video.paused && !view.reviewing) playVideo(view).catch(() => {});
+        const where = stops.length > 1 ? ` ${stop.index + 1}/${stops.length}` : "";
+        toast(view, `${actLabel(act)}${where} · ${formatTime(stop.time)}${stop.wrapped && stops.length > 1 ? " (back to the first)" : ""}`,
+          () => setTime(view, before));
+        return;
+      }
+      if (lane && view.timelineDuration) {
         const box = lane.getBoundingClientRect();
         time = (Math.min(Math.max(event.clientX - box.left, 0), box.width) / box.width) * view.timelineDuration;
       }
@@ -988,6 +1014,7 @@
       if (view.video.paused && !view.reviewing) playVideo(view).catch(() => {});
     });
     attachTimelinePeek(view, panel);
+    attachMarks(view, panel);
     // Below the player and its scrubber, not inside the player: Stash sizes
     // the player to the window, so rows added inside would shrink the video.
     const host = wrapper.closest(".scene-player-container");
@@ -1027,14 +1054,17 @@
     placeLine(view, view.timeline?.querySelector(".auto-seek-tl-playhead"), view.video.currentTime);
   }
 
-  // Where an act next peaks after the playhead, over the frames scanned so
-  // far (while a scan runs, only those its line has revealed).
-  function nextPeakOf(view, act) {
+  // An act's stops (see actStops) over the frames scanned so far (while a
+  // scan runs, only those its line has revealed).
+  function stopsOf(view, act) {
     const j = view.timelineActs?.indexOf(act) ?? -1;
-    if (j < 0) return null;
+    if (j < 0) return [];
     const limit = view.tl?.cursor ?? Infinity;
     const points = (view.timelineFrames || []).filter(([time]) => time <= limit).map(([time, scores]) => [time, scores[j] / 100]);
-    return nextPeak(points, view.video.currentTime, TL_FLOOR);
+    const row = view.timeline?.querySelector(`.auto-seek-tl-row[data-act="${CSS.escape(act)}"]`);
+    const first = row?.dataset.first ? Number(row.dataset.first) : null;
+    const stops = actStops(points, first, TL_FLOOR);
+    return stops.length || first == null ? stops : [first];
   }
 
   // Hovering a lane shows that moment: Stash's seek-bar thumbnail at once,
@@ -1090,24 +1120,23 @@
     const row = document.createElement("div");
     row.className = "auto-seek-tl-row is-unsure";
     row.dataset.act = name;
-    row.innerHTML = nameButton(actLabel(name), null, false, 0) + NEXT + JUDGE +
+    row.innerHTML = nameButton(actLabel(name), null, false, 0) + JUDGE +
       `<div class="auto-seek-tl-lane" data-act="${name}"><svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"></svg></div>`;
     return row;
   }
 
-  // An act's name: plays from where it first shows, or, for an act without
-  // a clear start, from where it looked most likely ("~" and in italics).
+  // An act's name, with where it first shows, or, for an act without a
+  // clear start, where it looked most likely ("~" and in italics); a tap
+  // steps through its stops (see actStops).
   // Review mode's buttons on each row: judge the act at the playhead.
-  // Next to each name: on to the act's next peak after the playhead.
-  const NEXT = '<button type="button" class="auto-seek-tl-next" title="Next peak of this act" aria-label="Next peak of this act">›</button>';
   const JUDGE = '<span class="auto-seek-tl-judge"><button type="button" data-verdict="0" title="Not this act here (the frame you are looking at)">✗</button>' +
     '<button type="button" data-verdict="1" title="This act is here (the frame you are looking at)">✓</button></span>';
 
   function nameButton(label, time, sure, peak) {
     const when = time == null ? "" : `${sure ? "" : "~"}${formatTime(time)}`;
     const title = time == null ? "" : sure
-      ? `Play from ${formatTime(time)}, where it first shows`
-      : `No clear start: play from ${formatTime(time)}, where it looked most likely (${Math.round(100 * peak)}%)`;
+      ? `Tap to step through it: ${formatTime(time)}, where it first shows, then each later peak`
+      : `No clear start (most likely at ${formatTime(time)}, ${Math.round(100 * peak)}%): tap to step through where it looked likely`;
     return `<button type="button" class="auto-seek-tl-name"${time == null ? "" : ` data-jump="${time}" title="${title}"`}>` +
       `<span class="auto-seek-tl-label">${label}</span><span class="auto-seek-tl-first">${when}</span></button>`;
   }
@@ -1291,19 +1320,23 @@
     });
     const at = same ? Number(same[0].slice(same[0].lastIndexOf("|") + 1)) : time;
     const next = same ? null : verdict;
-    const save = async (value) => {
-      if (value == null) view.reviews.delete(`${act}|${at}`); else view.reviews.set(`${act}|${at}`, value);
-      paintReviews(view);
-      try {
-        const answer = await operation({ op: "review", scene_id: view.id, t: at, act, verdict: value });
-        setReviews(view, answer.reviews);
-      } catch (error) {
-        toast(view, `Couldn't save the mark: ${error.message}`);
-      }
-    };
-    await save(next);
+    await saveMark(view, act, at, next);
     const what = `${actLabel(act)} at ${formatTime(at)}`;
-    toast(view, next == null ? `Mark taken back: ${what}` : `${next ? "✓" : "✗"} ${what}`, () => save(next == null ? verdict : null));
+    toast(view, next == null ? `Mark taken back: ${what}` : `${next ? "✓" : "✗"} ${what}`, () => saveMark(view, act, at, next == null ? verdict : null));
+  }
+
+  // Set (1 right, 0 wrong) or take back (null) one mark, on the page at once
+  // and then on the server, whose list of marks then stands.
+  async function saveMark(view, act, at, value) {
+    view.reviews ||= new Map();
+    if (value == null) view.reviews.delete(`${act}|${at}`); else view.reviews.set(`${act}|${at}`, value);
+    paintReviews(view);
+    try {
+      const answer = await operation({ op: "review", scene_id: view.id, t: at, act, verdict: value });
+      setReviews(view, answer.reviews);
+    } catch (error) {
+      toast(view, `Couldn't save the mark: ${error.message}`);
+    }
   }
 
   function setReviews(view, list) {
@@ -1325,6 +1358,90 @@
       dot.style.left = `${((100 * time) / view.timelineDuration).toFixed(2)}%`;
       lane.appendChild(dot);
     }
+    renderMarks(view);
+  }
+
+  // ── review mode: the marks so far, as a grid of frames ──
+  // Below the timeline while reviewing: each mark's exact frame, verdict,
+  // act and time, in time order. A tap on the frame goes there (paused stays
+  // paused); × takes the mark back.
+  const TIMELINE_MARKS_KEY = "auto-seek:timeline-marks-closed";
+
+  function renderMarks(view) {
+    const box = view.timeline?.querySelector(".auto-seek-tl-marks");
+    if (!box) return;
+    const marks = [...(view.reviews || [])].map(([key, verdict]) => {
+      const cut = key.lastIndexOf("|");
+      return { key, act: key.slice(0, cut), time: Number(key.slice(cut + 1)), verdict };
+    }).sort((a, b) => a.time - b.time || a.act.localeCompare(b.act));
+    box.hidden = !marks.length;
+    box.querySelector(".auto-seek-tl-marks-count").textContent = String(marks.length);
+    const grid = box.querySelector(".auto-seek-tl-marks-grid");
+    const cards = new Map([...grid.children].map((card) => [card.dataset.key, card]));
+    marks.forEach((mark, i) => {
+      let card = cards.get(mark.key);
+      cards.delete(mark.key);
+      if (!card) {
+        card = document.createElement("figure");
+        card.className = "auto-seek-mark-card";
+        card.dataset.key = mark.key;
+        card.dataset.act = mark.act;
+        card.dataset.time = String(mark.time);
+        card.innerHTML =
+          `<button type="button" class="auto-seek-mark-shot" title="Go to ${formatTime(mark.time)}">` +
+          `<img alt="" hidden><span class="auto-seek-mark-time">${formatTime(mark.time)}</span></button>` +
+          '<figcaption><b></b> <span></span></figcaption>' +
+          '<button type="button" class="auto-seek-mark-remove" title="Remove this mark" aria-label="Remove this mark">×</button>';
+        card.querySelector("figcaption span").textContent = actLabel(mark.act);
+      }
+      card.classList.toggle("yes", mark.verdict === 1);
+      card.classList.toggle("no", mark.verdict !== 1);
+      card.dataset.verdict = String(mark.verdict);
+      card.querySelector("figcaption b").textContent = mark.verdict === 1 ? "✓" : "✗";
+      if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
+    });
+    for (const card of cards.values()) card.remove();
+    loadMarkFrames(view);
+  }
+
+  // The frames, one at a time (each is an ffmpeg run on the server), and
+  // only while the grid shows.
+  function loadMarkFrames(view) {
+    const box = view.timeline?.querySelector(".auto-seek-tl-marks");
+    if (!box || !box.open || !view.reviewing) return;
+    for (const card of box.querySelectorAll(".auto-seek-mark-card:not([data-queued])")) {
+      card.dataset.queued = "1";
+      view.markFrames = (view.markFrames || Promise.resolve()).then(async () => {
+        if (!card.isConnected) return;
+        const url = await exactFrame(view.id, Number(card.dataset.time));
+        const image = card.querySelector("img");
+        if (url) { image.src = url; image.hidden = false; }
+      });
+    }
+  }
+
+  function attachMarks(view, panel) {
+    const box = panel.querySelector(".auto-seek-tl-marks");
+    box.open = !stored(TIMELINE_MARKS_KEY);
+    box.addEventListener("toggle", () => {
+      store(TIMELINE_MARKS_KEY, !box.open);
+      loadMarkFrames(view);
+    });
+    box.querySelector(".auto-seek-tl-marks-grid").addEventListener("click", (event) => {
+      const card = event.target.closest(".auto-seek-mark-card");
+      if (!card || current !== view) return;
+      const time = Number(card.dataset.time);
+      if (event.target.closest(".auto-seek-mark-remove")) {
+        const { act } = card.dataset;
+        const verdict = Number(card.dataset.verdict);
+        saveMark(view, act, time, null);
+        toast(view, `Mark taken back: ${actLabel(act)} at ${formatTime(time)}`, () => saveMark(view, act, time, verdict));
+      } else if (event.target.closest(".auto-seek-mark-shot")) {
+        seekPlayer(view, time);
+        view.userSeeked = true;
+        if (view.video.paused && !view.reviewing) playVideo(view).catch(() => {});
+      }
+    });
   }
 
   function laneSvg(points, duration, threshold, spacing) {
@@ -1371,7 +1488,7 @@
         const sure = row.first != null;
         const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
         return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}>` +
-          nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak) + NEXT + JUDGE +
+          nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak) + JUDGE +
           `<div class="auto-seek-tl-lane" data-act="${row.name}">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div>`;
       }).join("");
     }
