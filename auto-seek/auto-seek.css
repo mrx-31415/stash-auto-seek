@@ -517,7 +517,7 @@
 .auto-seek-tl-review-help .yes { color: #4cd964; }
 /* While reviewing, a ✗/✓ pair sits between each name and its lane. */
 .auto-seek-tl-judge { display: none; gap: 2px; }
-.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content max-content 1fr; }
+.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content 1fr; }
 .auto-seek-timeline.is-reviewing .auto-seek-tl-judge { display: flex; }
 .auto-seek-tl-judge button {
   width: 1.6rem;
@@ -563,7 +563,7 @@
    the same place. */
 .auto-seek-tl-rows {
   display: grid;
-  grid-template-columns: max-content max-content 1fr;
+  grid-template-columns: max-content 1fr;
   align-items: center;
   column-gap: 0.5rem;
   row-gap: 3px;
@@ -653,28 +653,6 @@
   box-shadow: 0 0 4px rgba(48, 209, 88, 0.35);
 }
 
-/* On to the act's next peak, beside its name. */
-.auto-seek-tl-next {
-  width: 1.3rem;
-  height: 1.15rem;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  background: none;
-  color: inherit;
-  font-size: 1rem;
-  line-height: 1;
-  opacity: 0.45;
-  cursor: pointer;
-}
-
-.auto-seek-tl-next:hover,
-.auto-seek-tl-next:focus-visible {
-  background: rgba(255, 255, 255, 0.1);
-  opacity: 1;
-}
-
-.auto-seek-tl-row.is-unsure .auto-seek-tl-next { opacity: 0.3; }
 
 /* Where the scan has got to: a red line gliding right (moved every frame
    by the script, so no transition). */
@@ -726,6 +704,104 @@
 .auto-seek-tl-peek .auto-seek-strip-peek-image { display: block; border-radius: 2px; background-repeat: no-repeat; }
 
 .auto-seek-tl-empty { grid-column: 1 / -1; margin: 0.25rem 0 0; opacity: 0.7; }
+
+/* Review mode: the marks so far, below the timeline, as a grid of frames. */
+.auto-seek-tl-marks { display: none; margin: 0.5rem 0.75rem 0; }
+.auto-seek-timeline.is-reviewing .auto-seek-tl-marks:not([hidden]) { display: block; }
+.auto-seek-timeline.is-collapsed .auto-seek-tl-marks { display: none; }
+
+.auto-seek-tl-marks > summary {
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auto-seek-tl-marks-count {
+  margin-left: 0.25rem;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.auto-seek-tl-marks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.auto-seek-mark-card {
+  position: relative;
+  margin: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.auto-seek-mark-card.yes { box-shadow: inset 0 -2px 0 #4cd964; }
+.auto-seek-mark-card.no { box-shadow: inset 0 -2px 0 #ff3b30; }
+
+.auto-seek-mark-shot {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.auto-seek-mark-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.auto-seek-mark-shot img[hidden] { display: none; }
+
+.auto-seek-mark-time {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.auto-seek-mark-card figcaption {
+  padding: 0.2rem 0.4rem 0.3rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-seek-mark-card.yes figcaption b { color: #4cd964; }
+.auto-seek-mark-card.no figcaption b { color: #ff3b30; }
+
+.auto-seek-mark-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.auto-seek-mark-remove:hover,
+.auto-seek-mark-remove:focus-visible { background: #ff3b30; }
 
 @media (prefers-reduced-motion: reduce) {
   .auto-seek-tl-lane rect.pop, .auto-seek-tl-mark.pop { animation: none; }
