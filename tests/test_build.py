@@ -41,3 +41,14 @@ def test_dev_version_counts_commits_since_the_release_tag(tmp_path: Path, monkey
     assert build.dev_version() == "1.2.3"
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "next", "--allow-empty")
     assert build.dev_version().startswith("1.2.3+dev.1.")
+
+
+def test_the_development_plugin_is_never_packaged(tmp_path: Path) -> None:
+    """auto-seek-dev/ (review tools) lives in this repository but ships nowhere:
+    not in a release's archive nor in the dev source built from main."""
+    for plugin_version in ("9.8.7", "9.8.7+dev.1.abc"):
+        build.build(tmp_path / plugin_version, plugin_version, "2026-01-02 03:04:05")
+        with zipfile.ZipFile(tmp_path / plugin_version / f"{build.PLUGIN_ID}.zip") as package:
+            names = package.namelist()
+        assert not [name for name in names if "auto_seek_dev" in name or "auto-seek-dev" in name]
+    assert (ROOT / "auto-seek-dev" / "auto-seek-dev.yml").is_file()

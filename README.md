@@ -63,6 +63,19 @@ attaches `auto-seek.zip` and `auto-seek-index.yml`, which the plugin hub mirrors
 `scripts/build_auto_seek_runtime.sh` builds the musl ONNX Runtime bundles served from
 the `auto-seek-runtime-v1` release of stash-curator.
 
+### The development plugin
+
+`auto-seek-dev/` is a second plugin, **Auto Seek Dev**, with tools for improving the
+model: a review mode on the act timeline (mark an act as there or not at the frame on
+screen; the marks go into Auto Seek's cache as training labels) and a review queue (new
+scenes and the spots in them where two models disagree, built offline into
+`auto-seek-dev/data/review_queue.json`; `n` jumps to the next spot, `y` / `x` mark it).
+It is never packaged (`scripts/build.py` takes `auto-seek/` only) and hooks into the
+timeline through `window.AutoSeekExtensions` (see "extensions" in `auto-seek.js`). To
+use it, copy the folder next to an installed Auto Seek, so that the two folders are
+siblings in Stash's plugins folder, and reload plugins. The integration tests install
+it the same way.
+
 ## License
 
 [AGPL-3.0](LICENSE)

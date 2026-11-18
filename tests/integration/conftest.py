@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 PLUGIN_ID = "auto-seek"
+DEV_PLUGIN_ID = "auto-seek-dev"
 
 Gql = Callable[..., dict[str, Any]]
 
@@ -67,17 +68,28 @@ def scene(gql: Gql) -> dict[str, Any]:
     return {"id": found[0]["id"], "duration": found[0]["files"][0]["duration"]}
 
 
-@pytest.fixture
-def operation(gql: Gql) -> Callable[..., Any]:
+def plugin_operation(gql: Gql, plugin_id: str) -> Callable[..., Any]:
     def run(**args: Any) -> Any:
         return gql(
             "mutation($a: Map!) { runPluginOperation(plugin_id: $id, args: $a) }".replace(
-                "$id", json.dumps(PLUGIN_ID)
+                "$id", json.dumps(plugin_id)
             ),
             {"a": args},
         )["runPluginOperation"]
 
     return run
+
+
+@pytest.fixture
+def operation(gql: Gql) -> Callable[..., Any]:
+    return plugin_operation(gql, PLUGIN_ID)
+
+
+@pytest.fixture
+def dev_operation(gql: Gql) -> Callable[..., Any]:
+    """An operation of the development plugin (auto-seek-dev/), which the
+    integration Stash has installed next to Auto Seek."""
+    return plugin_operation(gql, DEV_PLUGIN_ID)
 
 
 @pytest.fixture

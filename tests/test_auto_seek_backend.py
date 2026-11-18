@@ -942,31 +942,3 @@ def test_a_page_request_pauses_a_background_scan(backend, monkeypatch):
     assert backend.load_timeline("1")["state"] == 1 and backend.load_timeline("2")["state"] == 1
     # Each scene's frames cut once: the resumed scan kept the frames it had.
     assert len(cut) == 2 * len(set(cut))
-
-
-def test_review_marks_are_kept_per_frame_and_act(backend, monkeypatch):
-    fake_scene(backend, monkeypatch, lambda t: [0.3] * len(backend.ACTS))
-    backend.scan_timeline("1", {})
-    backend.review_act({"scene_id": "1", "t": 20, "act": "facial", "verdict": 0})
-    backend.review_act({"scene_id": "1", "t": 20, "act": "oral on him", "verdict": 1})
-    reviews = backend.review_act({"scene_id": "1", "t": 20, "act": "facial", "verdict": 1})[
-        "reviews"
-    ]
-    assert sorted(reviews) == [[20.0, "facial", 1], [20.0, "oral on him", 1]]
-    with backend.cache() as connection:
-        model, score = connection.execute(
-            "SELECT model, score FROM act_review WHERE act = 'facial'"
-        ).fetchone()
-    assert model.startswith("acts-") and score == 0.3  # what the model said when marked
-    # Marked at the playhead, between scanned frames: the nearest frame's score.
-    backend.review_act({"scene_id": "1", "t": 23.4, "act": "kissing", "verdict": 0})
-    with backend.cache() as connection:
-        assert (
-            connection.execute("SELECT score FROM act_review WHERE act = 'kissing'").fetchone()[0]
-            == 0.3
-        )
-    backend.review_act({"scene_id": "1", "t": 23.4, "act": "kissing", "verdict": None})
-    backend.review_act({"scene_id": "1", "t": 20, "act": "facial", "verdict": None})
-    assert backend.timeline_view({"scene_id": "1"}, {})["reviews"] == [[20.0, "oral on him", 1]]
-    with pytest.raises(ValueError):
-        backend.review_act({"scene_id": "1", "t": 20, "act": "nothing yet", "verdict": 1})

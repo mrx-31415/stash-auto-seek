@@ -1,0 +1,19 @@
+name: Auto Seek Dev
+description: Development tools for Auto Seek's act timeline (review marks for training, the review queue). Not part of Auto Seek's releases; needs Auto Seek installed next to it.
+version: 0.1.0
+url: https://github.com/mrx-31415/stash-auto-seek
+
+exec:
+  - python
+  - "{pluginDir}/auto_seek_dev.py"
+  - "{pluginDir}"
+interface: raw
+errLog: info
+
+ui:
+  requires:
+    - auto-seek
+  javascript:
+    - auto-seek-dev.js
+  css:
+    - auto-seek-dev.css
