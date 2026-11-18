@@ -517,7 +517,7 @@
 .auto-seek-tl-review-help .yes { color: #4cd964; }
 /* While reviewing, a ✗/✓ pair sits between each name and its lane. */
 .auto-seek-tl-judge { display: none; gap: 2px; }
-.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content 1fr; }
+.auto-seek-timeline.is-reviewing .auto-seek-tl-rows { grid-template-columns: max-content max-content max-content 1fr; }
 .auto-seek-timeline.is-reviewing .auto-seek-tl-judge { display: flex; }
 .auto-seek-tl-judge button {
   width: 1.6rem;
@@ -563,7 +563,7 @@
    the same place. */
 .auto-seek-tl-rows {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content max-content 1fr;
   align-items: center;
   column-gap: 0.5rem;
   row-gap: 3px;
@@ -641,7 +641,40 @@
   pointer-events: none;
 }
 
-.auto-seek-tl-playhead { background: rgba(255, 255, 255, 0.8); }
+/* Where the video is: a faint green line, a little stronger while it plays. */
+.auto-seek-tl-playhead {
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(48, 209, 88, 0.4);
+}
+
+.auto-seek-timeline.is-playing .auto-seek-tl-playhead {
+  background: rgba(48, 209, 88, 0.6);
+  box-shadow: 0 0 4px rgba(48, 209, 88, 0.35);
+}
+
+/* On to the act's next peak, beside its name. */
+.auto-seek-tl-next {
+  width: 1.3rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.auto-seek-tl-next:hover,
+.auto-seek-tl-next:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 1;
+}
+
+.auto-seek-tl-row.is-unsure .auto-seek-tl-next { opacity: 0.3; }
 
 /* Where the scan has got to: a red line gliding right (moved every frame
    by the script, so no transition). */
