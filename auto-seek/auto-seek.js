@@ -173,6 +173,28 @@
     return rows.sort((a, b) => (a.first ?? Infinity) - (b.first ?? Infinity) || b.peak - a.peak);
   }
 
+  // The next peak of an act after `after` seconds: its points ([time,
+  // score], in time order) fall into stretches at or above `floor` (a single
+  // frame dipping below doesn't end one), and each stretch peaks once. From
+  // before a peak that peak is next; from on it, the following stretch's.
+  function nextPeak(points, after, floor = 0.5) {
+    const peaks = [];
+    let best = null;
+    let below = 0;
+    for (const [time, score] of points) {
+      if (score >= floor) {
+        if (!best || score > best[1]) best = [time, score];
+        below = 0;
+      } else if (best && ++below > 1) {
+        peaks.push(best);
+        best = null;
+      }
+    }
+    if (best) peaks.push(best);
+    const next = peaks.find(([time]) => time > after + 0.5);
+    return next ? next[0] : null;
+  }
+
   // ── end pure helpers ───────────────────────────────────────────────────
 
   async function graphql(query, variables) {
@@ -941,15 +963,21 @@
     });
     const rows = panel.querySelector(".auto-seek-tl-rows");
     // A tap on a lane plays from there; on an act's name, from where it first
-    // shows. In review mode a tap on a lane marks that frame instead.
+    // shows; on its ›, from its next peak. While reviewing, a paused video
+    // stays paused, so the frame can be judged before it moves on.
     rows.addEventListener("click", (event) => {
       if (current !== view) return;
       const name = event.target.closest(".auto-seek-tl-name");
       const lane = event.target.closest(".auto-seek-tl-lane");
       const judge = event.target.closest(".auto-seek-tl-judge button");
+      const peak = event.target.closest(".auto-seek-tl-next");
       if (judge) { judgeHere(view, judge.closest(".auto-seek-tl-row").dataset.act, Number(judge.dataset.verdict)); return; }
       let time = null;
-      if (name?.dataset.jump) time = Number(name.dataset.jump);
+      if (peak) {
+        const act = peak.closest(".auto-seek-tl-row").dataset.act;
+        time = nextPeakOf(view, act);
+        if (time == null) { toast(view, `No later peak of ${actLabel(act)}`); return; }
+      } else if (name?.dataset.jump) time = Number(name.dataset.jump);
       else if (lane && view.timelineDuration) {
         const box = lane.getBoundingClientRect();
         time = (Math.min(Math.max(event.clientX - box.left, 0), box.width) / box.width) * view.timelineDuration;
@@ -957,7 +985,7 @@
       if (time == null) return;
       seekPlayer(view, time);
       view.userSeeked = true;
-      if (view.video.paused) playVideo(view).catch(() => {});
+      if (view.video.paused && !view.reviewing) playVideo(view).catch(() => {});
     });
     attachTimelinePeek(view, panel);
     // Below the player and its scrubber, not inside the player: Stash sizes
@@ -970,6 +998,9 @@
     if (tabs) document.documentElement.style.setProperty("--auto-seek-tabs-top", `${Math.max(0, tabs.getBoundingClientRect().top + window.scrollY)}px`);
     view.timeline = panel;
     view.video.addEventListener("timeupdate", () => movePlayhead(view));
+    const playing = () => panel.classList.toggle("is-playing", !view.video.paused);
+    for (const type of ["play", "pause", "ended"]) view.video.addEventListener(type, playing);
+    playing();
     view.timelineResize?.disconnect();
     view.timelineResize = new ResizeObserver(() => alignTimeline(view));
     view.timelineResize.observe(panel);
@@ -994,6 +1025,16 @@
 
   function movePlayhead(view) {
     placeLine(view, view.timeline?.querySelector(".auto-seek-tl-playhead"), view.video.currentTime);
+  }
+
+  // Where an act next peaks after the playhead, over the frames scanned so
+  // far (while a scan runs, only those its line has revealed).
+  function nextPeakOf(view, act) {
+    const j = view.timelineActs?.indexOf(act) ?? -1;
+    if (j < 0) return null;
+    const limit = view.tl?.cursor ?? Infinity;
+    const points = (view.timelineFrames || []).filter(([time]) => time <= limit).map(([time, scores]) => [time, scores[j] / 100]);
+    return nextPeak(points, view.video.currentTime, TL_FLOOR);
   }
 
   // Hovering a lane shows that moment: Stash's seek-bar thumbnail at once,
@@ -1049,7 +1090,7 @@
     const row = document.createElement("div");
     row.className = "auto-seek-tl-row is-unsure";
     row.dataset.act = name;
-    row.innerHTML = nameButton(actLabel(name), null, false, 0) + JUDGE +
+    row.innerHTML = nameButton(actLabel(name), null, false, 0) + NEXT + JUDGE +
       `<div class="auto-seek-tl-lane" data-act="${name}"><svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"></svg></div>`;
     return row;
   }
@@ -1057,6 +1098,8 @@
   // An act's name: plays from where it first shows, or, for an act without
   // a clear start, from where it looked most likely ("~" and in italics).
   // Review mode's buttons on each row: judge the act at the playhead.
+  // Next to each name: on to the act's next peak after the playhead.
+  const NEXT = '<button type="button" class="auto-seek-tl-next" title="Next peak of this act" aria-label="Next peak of this act">›</button>';
   const JUDGE = '<span class="auto-seek-tl-judge"><button type="button" data-verdict="0" title="Not this act here (the frame you are looking at)">✗</button>' +
     '<button type="button" data-verdict="1" title="This act is here (the frame you are looking at)">✓</button></span>';
 
@@ -1328,7 +1371,7 @@
         const sure = row.first != null;
         const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
         return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}>` +
-          nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak) + JUDGE +
+          nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak) + NEXT + JUDGE +
           `<div class="auto-seek-tl-lane" data-act="${row.name}">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div>`;
       }).join("");
     }
