@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.3.1...auto-seek-v0.4.0) (2026-11-18)
+
+
+### Features
+
+* choose where the action starts, with act-based models in two sizes ([#12](https://github.com/mrx-31415/stash-auto-seek/issues/12)) ([e2ae890](https://github.com/mrx-31415/stash-auto-seek/commit/e2ae8900d3f6ad70db8b8292857422dbeb92c4b2))
+* move review mode into a separate dev plugin that releases leave out ([#19](https://github.com/mrx-31415/stash-auto-seek/issues/19)) ([eb0094f](https://github.com/mrx-31415/stash-auto-seek/commit/eb0094f473332ccea3dcaf75cf6b14e2bf77b2a4))
+* pick where the action starts from a dropdown and a searchable list of acts ([5dea555](https://github.com/mrx-31415/stash-auto-seek/commit/5dea555552ec43c37ec9eb044922653396a0d5d8))
+* preview, smooth live scan and a review mode on the act timeline ([#16](https://github.com/mrx-31415/stash-auto-seek/issues/16)) ([f9b7b9f](https://github.com/mrx-31415/stash-auto-seek/commit/f9b7b9f9306a5c2e42b747e0d4de388b778cf3aa))
+* show every act across the scene in a live timeline under the player ([#15](https://github.com/mrx-31415/stash-auto-seek/issues/15)) ([ccb4005](https://github.com/mrx-31415/stash-auto-seek/commit/ccb4005715e72e755e98f89fa9014b13eee30094))
+* step through an act from its name, and see your review marks as frames ([977a6e2](https://github.com/mrx-31415/stash-auto-seek/commit/977a6e2865aa6b1f72aa9acb58ab9da2238fcb34))
+* step through an act's peaks, a green playhead, and no autoplay while reviewing ([3fc8d1e](https://github.com/mrx-31415/stash-auto-seek/commit/3fc8d1e8740368aabc93fa79ba9f759f0a2c11f8))
+
 ## [0.3.1](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.3.0...auto-seek-v0.3.1) (2026-11-13)
 
 
