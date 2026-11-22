@@ -91,6 +91,28 @@ def test_the_name_steps_through_the_act(page, base_url, timeline, errors) -> Non
     assert errors == []
 
 
+def test_the_top_act_strip_and_the_act_on_now(page, base_url, timeline, errors) -> None:
+    open_timeline(page, base_url, timeline)
+    video = page.locator(".video-js video")
+    # Kissing is sure at 10 s and again at 30 s: two spans on the top-act strip.
+    chapters = page.locator(".auto-seek-tl-chapter")
+    expect(chapters).to_have_count(2)
+    expect(page.locator(".auto-seek-tl-now")).to_be_hidden()  # 0 s: nothing sure yet
+    chapters.nth(1).click()
+    assert current_time(page) == pytest.approx(30, abs=0.5)
+    video.evaluate("video => video.pause()")
+    # The act on screen is named in the header and its row lights up.
+    expect(page.locator(".auto-seek-tl-now")).to_contain_text("Kissing")
+    row = page.locator(".auto-seek-tl-row[data-act='kissing']")
+    expect(row).to_have_class(re.compile(r"\bis-now\b"))
+    expect(chapters.nth(1)).to_have_class(re.compile(r"\bis-now\b"))
+    # Two stops, the second (30 s) passed.
+    dots = row.locator(".auto-seek-tl-dots i")
+    expect(dots).to_have_count(2)
+    expect(dots.nth(1)).to_have_class("on")
+    assert errors == []
+
+
 def test_reviewing_keeps_a_paused_video_paused(page, base_url, timeline, errors) -> None:
     open_timeline(page, base_url, timeline)
     video = page.locator(".video-js video")

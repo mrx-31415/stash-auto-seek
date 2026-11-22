@@ -148,13 +148,14 @@
   width: 4px;
   margin-left: -2px;
   border-radius: 2px 2px 0 0;
-  background: #6b7280;
+  background: #6b7280; /* the script colours each bar by its score */
   animation: auto-seek-grow 0.35s ease-out both;
   transform-origin: bottom;
+  transition: left 0.65s cubic-bezier(0.65, 0, 0.35, 1), width 0.65s, margin 0.65s, opacity 0.4s;
 }
 
 .auto-seek-strip-bars i.hit {
-  background: linear-gradient(#ffc93c, #ff8a1f);
+  box-shadow: 0 0 6px rgba(255, 170, 40, 0.55);
 }
 
 @keyframes auto-seek-grow {
@@ -196,9 +197,10 @@
 }
 
 @keyframes auto-seek-flash {
-  0% { box-shadow: 0 0 0 0 rgba(255, 184, 31, 0); transform: scaleY(0.2); }
-  25% { box-shadow: 0 0 18px 6px rgba(255, 210, 90, 0.95); transform: scaleY(1.15); }
-  100% { box-shadow: 0 0 10px 2px rgba(255, 184, 31, 0.85); transform: scaleY(1); }
+  0% { box-shadow: 0 0 0 0 rgba(255, 184, 31, 0); transform: translateY(-40px); opacity: 0; }
+  45% { box-shadow: 0 0 18px 6px rgba(255, 210, 90, 0.95); transform: translateY(3px); opacity: 1; }
+  70% { transform: translateY(-2px); }
+  100% { box-shadow: 0 0 10px 2px rgba(255, 184, 31, 0.85); transform: translateY(0); }
 }
 
 @keyframes auto-seek-glow {
@@ -329,6 +331,144 @@
 .auto-seek-strip-close:focus-visible {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
+}
+
+/* The first frame past the threshold lights the threshold line, with a spark. */
+.auto-seek-strip-bars.is-lit .auto-seek-strip-line {
+  border-top: 1px solid rgba(255, 184, 31, 0.75);
+  box-shadow: 0 0 6px rgba(255, 184, 31, 0.6);
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+
+.auto-seek-strip-spark {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  margin: 0 0 -2px -2px;
+  border-radius: 50%;
+  background: #fff1c2;
+  pointer-events: none;
+  animation: auto-seek-spark 0.7s ease-out forwards;
+}
+
+@keyframes auto-seek-spark {
+  0% { box-shadow: 0 0 0 0 rgba(255, 241, 194, 0.9); opacity: 1; }
+  100% { box-shadow: 0 0 0 16px rgba(255, 184, 31, 0); opacity: 0; }
+}
+
+/* The lock-on: the strip zooms into where the search closed in (wider bars,
+   the window's times at its ends), brackets narrow onto the start, lock. */
+.auto-seek-strip.is-zoomed .auto-seek-strip-bars i { width: 6px; margin-left: -3px; }
+/* While it zooms, bars outside the window glide out past the strip's ends
+   (the room above and below keeps the brackets and times). */
+.auto-seek-strip.is-locking .auto-seek-strip-bars { clip-path: inset(-12px 0 -6px 0); }
+.auto-seek-strip.is-locking::after { display: none; }
+
+.auto-seek-strip-edge {
+  position: absolute;
+  top: -6px;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 10px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.auto-seek-strip-edge.is-low { left: 0; }
+.auto-seek-strip-edge.is-high { right: 0; }
+.auto-seek-strip-edge[hidden], .auto-seek-strip-bracket[hidden] { display: none; }
+.auto-seek-strip-edge, .auto-seek-strip-bracket { line-height: 10px; }
+
+.auto-seek-strip-bracket {
+  position: absolute;
+  z-index: 3;
+  top: -3px;
+  bottom: 0;
+  width: 6px;
+  border: 2px solid #fff1c2;
+  filter: drop-shadow(0 0 4px #ffb81f);
+  transition: left 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.auto-seek-strip-bracket.is-low { margin-left: -8px; border-right: 0; }
+.auto-seek-strip-bracket.is-high { margin-left: 2px; border-left: 0; }
+.auto-seek-strip.is-locked .auto-seek-strip-bracket { animation: auto-seek-lock 0.5s ease-out; }
+
+@keyframes auto-seek-lock {
+  50% { border-color: #fff; filter: drop-shadow(0 0 10px #fff); }
+}
+
+/* The frame being looked at, beside the words; held and ringed on the start. */
+.auto-seek-strip-thumb {
+  position: relative;
+  flex: none;
+  height: 22px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #111;
+  transition: transform 0.3s ease-out, box-shadow 0.3s;
+}
+
+.auto-seek-strip-thumb[hidden] { display: none; }
+.auto-seek-strip-thumb b { display: block; transform-origin: 0 0; background-repeat: no-repeat; }
+.auto-seek-strip-thumb.is-held { transform: scale(1.3); box-shadow: 0 0 0 2px #ffb81f, 0 0 12px rgba(255, 184, 31, 0.6); }
+
+/* The Skip intro jump on Stash's seek bar: a streak to where it lands, and
+   a ripple there. */
+.video-js .auto-seek-jump-streak,
+.video-js .auto-seek-jump-ripple {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.video-js .auto-seek-jump-streak {
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, rgba(255, 184, 31, 0.85));
+  animation: auto-seek-fade 0.6s ease-out forwards;
+}
+
+.video-js .auto-seek-jump-ripple {
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border: 2px solid #ffb81f;
+  border-radius: 50%;
+  animation: auto-seek-ripple 0.9s ease-out forwards;
+}
+
+@keyframes auto-seek-fade { to { opacity: 0; } }
+@keyframes auto-seek-ripple {
+  0% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(12, 3); }
+}
+
+/* Phones: the words get their own line above the bars, so they don't cover
+   the bars (and the lock-on) on a narrow strip. */
+@media (max-width: 500px) {
+  .auto-seek-strip-label,
+  .auto-seek-strip.is-quiet .auto-seek-strip-label,
+  .auto-seek-strip.is-quiet:hover .auto-seek-strip-label {
+    position: static;
+    transform: none;
+    max-width: calc(100% - 28px);
+    padding: 0 8px 5px;
+    background: none;
+  }
+
+  .auto-seek-strip.is-quiet .auto-seek-strip-label span {
+    max-width: 40em;
+    opacity: 1;
+  }
+
+  .auto-seek-strip { display: flex; flex-direction: column; }
+  .auto-seek-strip-label { order: -1; }
+  .auto-seek-strip-close { top: 15px; }
+  .auto-seek-strip-icon { width: 18px; height: 18px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -505,7 +645,10 @@
 .auto-seek-timeline.is-collapsed .auto-seek-tl-chevron { transform: rotate(-90deg); }
 .auto-seek-timeline.is-collapsed .auto-seek-tl-body { display: none; }
 
-.auto-seek-tl-body { position: relative; }
+.auto-seek-tl-body { position: relative; transition: padding-top 0.3s ease-out; }
+/* While the scan runs, a track above the lanes for the frame riding on its
+   line (.auto-seek-tl-scanthumb), so it covers no lane. */
+.auto-seek-timeline.is-scanning .auto-seek-tl-body { padding-top: 46px; }
 
 /* Names in a column as wide as the longest one, lanes beside them: the
    rows are "display: contents" items of one grid, so every lane starts at
@@ -555,8 +698,132 @@
 }
 
 .auto-seek-tl-lane svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.auto-seek-tl-lane rect { fill: var(--as-tl-bar); }
-.auto-seek-tl-lane rect.hit { fill: var(--as-tl-hit); }
+.auto-seek-tl-lane rect { fill: rgba(255, 255, 255, 0.2); }
+.auto-seek-tl-lane rect.hit { fill: var(--as-c, var(--as-tl-hit)); }
+
+/* The act on screen now: its name and lane light up in its colour. */
+.auto-seek-tl-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--as-c, var(--as-tl-hit));
+  opacity: 0.4;
+  vertical-align: 1px;
+  transition: opacity 0.25s, box-shadow 0.25s;
+}
+
+.auto-seek-tl-label { transition: color 0.25s, text-shadow 0.25s; }
+.auto-seek-tl-row.is-now .auto-seek-tl-label { color: #fff; text-shadow: 0 0 10px var(--as-c); }
+.auto-seek-tl-row.is-now .auto-seek-tl-label::before { opacity: 1; box-shadow: 0 0 6px var(--as-c); }
+.auto-seek-tl-row.is-now .auto-seek-tl-lane { background: color-mix(in srgb, var(--as-c) 12%, rgba(255, 255, 255, 0.06)); }
+
+/* Where its stops have got to: one even segment per stop in a thin line
+   under the name, so rows with many stops don't push their time aside. */
+.auto-seek-tl-name { position: relative; }
+.auto-seek-tl-dots {
+  position: absolute;
+  left: 11px;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 1px;
+  height: 2px;
+  pointer-events: none;
+}
+.auto-seek-tl-dots i { flex: 1; max-width: 14px; border-radius: 1px; background: var(--as-c); opacity: 0.25; }
+.auto-seek-tl-dots i.on { opacity: 1; box-shadow: 0 0 4px var(--as-c); }
+
+/* A row the scan reaches opens up in its place, once (the script drops
+   is-new when it ends, so a move doesn't replay it). */
+.auto-seek-tl-row.is-new > * { animation: auto-seek-tl-enter 0.35s ease-out; overflow: hidden; }
+
+@keyframes auto-seek-tl-enter {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 2rem; }
+}
+
+/* The scene in chapters, above the lanes: tap one to play from there. */
+.auto-seek-tl-chapters-label { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.5; }
+.auto-seek-tl-chapters-label[hidden], .auto-seek-tl-chapters[hidden] { display: none; }
+.auto-seek-tl-chapters {
+  grid-column: -2 / -1;
+  position: relative;
+  height: 1.15rem;
+  margin-bottom: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.auto-seek-tl-chapter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 0 0 4px;
+  border: 0;
+  border-right: 1px solid rgba(0, 0, 0, 0.5);
+  background: var(--as-c);
+  color: #111;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.auto-seek-tl-chapter span { overflow: hidden; text-overflow: ellipsis; }
+.auto-seek-tl-chapter:hover, .auto-seek-tl-chapter:focus-visible { filter: brightness(1.15); }
+.auto-seek-tl-chapter.is-now { box-shadow: inset 0 0 0 2px #fff; }
+
+/* The header: acts found so far (it bumps with each), and what's on now. */
+.auto-seek-tl-found {
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: rgba(245, 180, 0, 0.15);
+  color: #f5b400;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.auto-seek-tl-found[hidden], .auto-seek-tl-now[hidden] { display: none; }
+.auto-seek-tl-found.bump { animation: auto-seek-tl-bump 0.4s ease-out; }
+
+@keyframes auto-seek-tl-bump { 40% { transform: scale(1.25); } }
+
+.auto-seek-tl-now { margin-left: auto; opacity: 0.85; font-size: 0.8rem; white-space: nowrap; }
+.auto-seek-tl-now b { color: var(--as-c); display: inline-block; }
+.auto-seek-tl-now b.is-new { animation: auto-seek-tl-swap 0.3s ease-out; }
+.auto-seek-tl-now + .auto-seek-tl-chevron { margin-left: 0.5rem; }
+
+@keyframes auto-seek-tl-swap { from { opacity: 0; transform: translateY(5px); } }
+
+/* Hovering: a line through every lane at that moment, and the other acts
+   seen there in the preview. */
+.auto-seek-tl-cross {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+}
+
+.auto-seek-tl-peek-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.auto-seek-tl-peek-acts:empty { display: none; }
+.auto-seek-tl-peek-acts span::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--as-c);
+}
 
 .auto-seek-tl-mark {
   position: absolute;
@@ -612,6 +879,33 @@
   box-shadow: 0 0 6px 1px rgba(255, 59, 48, 0.75);
 }
 
+/* The frame under the scan line rides along at its top. */
+.auto-seek-tl-scanthumb {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  z-index: 2;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #111;
+  box-shadow: 0 0 0 1px #ff3b30, 0 2px 10px rgba(0, 0, 0, 0.6);
+  transition: opacity 0.2s;
+}
+.auto-seek-tl-scanthumb[hidden] { display: none; }
+.auto-seek-tl-scanthumb b { display: block; transform-origin: 0 0; background-repeat: no-repeat; }
+.auto-seek-tl-body:has(.auto-seek-tl-peek:not([hidden])) .auto-seek-tl-scanthumb { opacity: 0; }
+
+.auto-seek-tl-scanline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 2px;
+  width: 60px;
+  background: linear-gradient(90deg, transparent, rgba(255, 59, 48, 0.18));
+}
+
 /* Bars and first marks pop up as the scan line passes them. */
 .auto-seek-tl-lane rect.pop {
   transform-box: fill-box;
@@ -620,6 +914,23 @@
 }
 
 .auto-seek-tl-mark.pop { animation: auto-seek-tl-mark 0.5s ease-out; }
+.auto-seek-tl-mark.ring::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px;
+  border: 2px solid var(--as-c, #fff);
+  border-radius: 50%;
+  animation: auto-seek-tl-ring 0.8s ease-out forwards;
+}
+
+@keyframes auto-seek-tl-ring {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(3.2); opacity: 0; }
+}
 
 @keyframes auto-seek-tl-pop {
   from { transform: scaleY(0); }
@@ -655,7 +966,9 @@
 .auto-seek-tl-empty { grid-column: 1 / -1; margin: 0.25rem 0 0; opacity: 0.7; }
 
 @media (prefers-reduced-motion: reduce) {
-  .auto-seek-tl-lane rect.pop, .auto-seek-tl-mark.pop { animation: none; }
+  .auto-seek-tl-lane rect.pop, .auto-seek-tl-mark.pop, .auto-seek-tl-mark.ring::after,
+  .auto-seek-tl-row.is-new > *, .auto-seek-tl-found.bump, .auto-seek-tl-now b.is-new { animation: none; }
+  .auto-seek-strip-bars i { transition: none; }
 }
 
 /* Stash's wide layout: the details column is one window tall and scrolls on
