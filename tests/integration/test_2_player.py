@@ -94,6 +94,38 @@ def test_the_flag_marks_the_start_for_good(page, base_url, scene, operation, err
     assert errors == []
 
 
+def test_the_flag_uses_the_players_clock_on_converted_files(
+    page, base_url, scene, operation, errors
+) -> None:
+    """A file Stash converts on the fly restarts the stream at each seek: the
+    <video> element's clock then counts from the restart, Stash's player
+    keeps the scene's time. Simulated here: the element runs 20 s behind."""
+    try:
+        open_scene(page, base_url, scene)
+        page.locator(".video-js video").evaluate(
+            "video => { video.muted = true; video.currentTime = 30; }"
+        )
+        page.wait_for_function("() => document.querySelector('.video-js video').currentTime >= 30")
+        page.locator(".video-js video").evaluate(
+            """video => {
+              const real = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+              Object.defineProperty(video, "currentTime", {
+                configurable: true, get() { return real.get.call(this) - 20; }, set(t) { real.set.call(this, t); },
+              });
+              const player = video.closest(".video-js").player;
+              player.currentTime = (t) => (t === undefined ? real.get.call(video) : (real.set.call(video, t), undefined));
+            }"""
+        )
+        page.locator(".auto-seek-mark").dispatch_event("click")
+        expect(page.locator(".auto-seek-toast").first).to_contain_text("Start set to 0:30")
+        page.wait_for_timeout(1000)  # the save follows the toast
+        saved = operation(op="get", scene_ids=[scene["id"]])[scene["id"]]
+        assert saved["start"] == pytest.approx(30, abs=0.5)  # not the element's 0:10
+    finally:
+        operation(op="unmark", scene_id=scene["id"])
+    assert errors == []
+
+
 def test_without_the_model_the_player_still_works(
     page, base_url, scene, operation, configure, hide_data, errors
 ) -> None:

@@ -411,9 +411,8 @@
   // keeps it apart from the cache, so a new model doesn't undo it), and,
   // next to the computed start, is a label for training a better model.
   async function markStart(view) {
-    const { video } = view;
-    const start = video.currentTime;
-    const duration = Math.max(video.duration || 0, start);
+    const start = timeOf(view);
+    const duration = Math.max(durationOf(view) || 0, start);
     const before = { marked: view.marked, start: view.start };
     // Answer the tap at once; the save follows (a busy server can take seconds).
     known.set(view.id, Promise.resolve({ start, duration, cached: true, marked: true, samples: view.samples, threshold: view.threshold }));
@@ -454,7 +453,7 @@
     view.button.querySelector(".vjs-control-text").textContent = label;
     // The pill only offers itself while there is still an intro to skip, or
     // while it is holding playback for the start point.
-    const before = view.target == null ? view.video.currentTime < 120 : view.video.currentTime < view.target - 2;
+    const before = view.target == null ? timeOf(view) < 120 : timeOf(view) < view.target - 2;
     // Hidden by the setting, it still appears while it holds playback for an
     // automatic skip, since only it can say so.
     const show = view.holding || view.needsTap || (!view.hideButton && view.state !== "error" && !view.dismissed && before);
@@ -476,6 +475,20 @@
     return view.video.closest(".video-js")?.player ?? null;
   }
 
+  // Where the video is, and how long, in the scene's time. Ask Stash's
+  // player: a file it converts on the fly (one the browser can't play as it
+  // is) restarts the stream at each seek, and the <video> element's own clock
+  // and duration count from that restart.
+  function timeOf(view) {
+    const time = playerOf(view)?.currentTime();
+    return Number.isFinite(time) ? time : view.video.currentTime;
+  }
+
+  function durationOf(view) {
+    const duration = playerOf(view)?.duration();
+    return Number.isFinite(duration) && duration > 0 ? duration : view.video.duration;
+  }
+
   function setTime(view, time) {
     view.ourSeek = true;
     const player = playerOf(view);
@@ -495,7 +508,7 @@
   // `intro`: a Skip intro jump (the pill, the button or the automatic one),
   // which counts up what it skipped; other jumps just say where they went.
   function seekPlayer(view, time, intro = false) {
-    const before = view.video.currentTime;
+    const before = timeOf(view);
     setTime(view, time);
     view.dismissed = true;
     render();
@@ -539,7 +552,7 @@
   // where it lands, and a ripple there.
   function rippleSeekBar(view, from, to) {
     const holder = view.video.closest(".video-js")?.querySelector(".vjs-progress-holder");
-    const duration = view.duration || view.video.duration;
+    const duration = view.duration || durationOf(view);
     if (!holder || !(duration > 0) || reducedMotion()) return;
     const at = (time) => `${Math.min(100, Math.max(0, (100 * time) / duration))}%`;
     const streak = document.createElement("span");
@@ -1027,7 +1040,7 @@
     if (current !== view) return;
     // Jump unless the viewer moved on their own meanwhile, or is already past
     // the start (a resume point beyond the intro wins).
-    if (target != null && !view.userSeeked && video.currentTime < target) seekPlayer(view, target, true);
+    if (target != null && !view.userSeeked && timeOf(view) < target) seekPlayer(view, target, true);
     // Playing, or the viewer pressed play or pause themselves while it waited:
     // leave play and pause alone.
     if (!video.paused || view.tookOver) {
@@ -1066,7 +1079,7 @@
     // Already playing: keep going and jump once the start is known.
     view.userSeeked = false;
     resolve(view).then((target) => {
-      if (current === view && !view.userSeeked && video.currentTime < target) seekPlayer(view, target, true);
+      if (current === view && !view.userSeeked && timeOf(view) < target) seekPlayer(view, target, true);
     }, () => {});
   }
 
@@ -1074,9 +1087,9 @@
     if (view.autoDone || view.holding) return;
     view.autoDone = true;
     const { plugin } = await settings();
-    if (plugin.autoSkip !== true || view.video.currentTime > 15) return;
+    if (plugin.autoSkip !== true || timeOf(view) > 15) return;
     if (view.target != null) {
-      if (!view.userSeeked && view.video.currentTime < view.target - 2) seekPlayer(view, view.target, true);
+      if (!view.userSeeked && timeOf(view) < view.target - 2) seekPlayer(view, view.target, true);
       return;
     }
     playFromStart(view, 30000);
@@ -1110,7 +1123,7 @@
     marker.addEventListener("click", (event) => { event.stopPropagation(); markStart(view); });
     pill.addEventListener("click", onSkip);
     video.addEventListener("seeking", () => {
-      if (view.ourSeek) view.ourSeek = false; else if (video.currentTime > 1) view.userSeeked = true;
+      if (view.ourSeek) view.ourSeek = false; else if (timeOf(view) > 1) view.userSeeked = true;
     });
     video.addEventListener("timeupdate", render);
     // The viewer pressing play or pause (a control, a tap on the picture, or
@@ -1250,9 +1263,9 @@
       if (name) {
         const act = name.closest(".auto-seek-tl-row").dataset.act;
         const stops = stopsOf(view, act);
-        const stop = nextStop(stops, view.video.currentTime);
+        const stop = nextStop(stops, timeOf(view));
         if (!stop) return;
-        const before = view.video.currentTime;
+        const before = timeOf(view);
         seekPlayer(view, stop.time);
         view.userSeeked = true;
         if (view.video.paused && !view.keepPaused) playVideo(view).catch(() => {});
@@ -1359,7 +1372,7 @@
   }
 
   function movePlayhead(view) {
-    const time = view.video.currentTime;
+    const time = timeOf(view);
     placeLine(view, view.timeline?.querySelector(".auto-seek-tl-playhead"), time);
     showNow(view, time);
   }
@@ -1675,7 +1688,7 @@
   function followScan(view, answer) {
     const panel = ensureTimeline(view);
     if (!panel) return;
-    const duration = answer.duration || view.duration || view.video.duration;
+    const duration = answer.duration || view.duration || durationOf(view);
     if (!(duration > 0)) return;
     view.timelineDuration = duration;
     view.timelineActs = answer.acts;
@@ -1746,7 +1759,7 @@
     view.timelineRows = rows;
     // The scene's length from the player when the server has none yet, so
     // the lanes keep one scale from the first frame on.
-    view.timelineDuration = answer.duration || view.duration || view.video.duration;
+    view.timelineDuration = answer.duration || view.duration || durationOf(view);
     const found = rows.filter((row) => row.first != null);
     const unsure = rows.length - found.length;
     const scanning = answer.state === "scanning" || answer.state === "queued";
