@@ -47,7 +47,7 @@ def test_skip_intro_jumps_to_the_start(page, base_url, marked, errors) -> None:
     pill = page.locator(".auto-seek-pill")
     expect(pill.locator(".auto-seek-pill-arrow")).to_be_visible()
     pill.click()
-    expect(page.locator(".auto-seek-toast").first).to_contain_text("Skipped to 0:17")
+    expect(page.locator(".auto-seek-toast").first).to_contain_text("Skipped 0:17 of intro")
     assert 17 <= current_time(page) < 25
     expect(pill).to_be_hidden()  # no intro left to skip
     assert errors == []
