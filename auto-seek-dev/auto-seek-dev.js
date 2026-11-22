@@ -209,7 +209,7 @@
       dot.className = `auto-seek-tl-dot ${mark.verdict ? "yes" : "no"}`;
       dot.title = `${api.actLabel(mark.act)} at ${api.formatTime(mark.time)}: ${mark.verdict ? "right, it is here" : "wrong, not here"}`;
       dot.style.left = `${((100 * mark.time) / api.duration).toFixed(2)}%`;
-      lane.appendChild(dot);
+      (lane.querySelector(".auto-seek-tl-track") || lane).appendChild(dot);
     }
     settleSpots(state);
     renderMarks(state);
@@ -312,7 +312,7 @@
       ring.className = `auto-seek-dev-spot${spot.done ? " is-done" : ""}${spot === state.spot ? " is-current" : ""}`;
       ring.title = `${api.actLabel(spot.act)} at ${api.formatTime(spot.t)}: this model ${Math.round(100 * spot.yours)}%, the stronger one ${Math.round(100 * spot.teacher)}%`;
       ring.style.left = `${((100 * spot.t) / api.duration).toFixed(2)}%`;
-      lane.appendChild(ring);
+      (lane.querySelector(".auto-seek-tl-track") || lane).appendChild(ring);
     }
   }
 

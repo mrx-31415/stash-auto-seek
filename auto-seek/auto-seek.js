@@ -292,6 +292,42 @@
     return h ? `${h} h ${m} m` : `${m} m`;
   }
 
+  // Where an act clearly is: runs of frames ([time, score], in time order)
+  // at or above `threshold`, a single frame below not ending one, each
+  // [from, to) in seconds, to the end of its last frame.
+  function hitRuns(points, threshold = 0.8, spacing = 10) {
+    const runs = [];
+    let open = null;
+    let below = 0;
+    for (const [time, score] of points) {
+      if (score >= threshold) {
+        if (!open) runs.push((open = [time, time + spacing]));
+        open[1] = time + spacing;
+        below = 0;
+      } else if (open && ++below > 1) {
+        open = null;
+      }
+    }
+    return runs;
+  }
+
+  // The part of the scene the lanes show, [from, to): at least `least`
+  // seconds (or the whole scene, if shorter), kept inside the scene.
+  function zoomWindow(from, to, duration, least) {
+    const span = Math.min(duration, Math.max(least, to - from));
+    const start = Math.min(Math.max(0, from), duration - span);
+    return [start, start + span];
+  }
+
+  // The ruler's ticks for `span` seconds across `width` pixels: labelled
+  // ones at least 56 px apart, and the next smaller step between them.
+  const RULER_STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  function rulerSteps(span, width) {
+    const found = RULER_STEPS.findIndex((step) => (step / span) * width >= 56);
+    const k = found < 0 ? RULER_STEPS.length - 1 : found;
+    return [RULER_STEPS[k], RULER_STEPS[Math.max(0, k - 1)]];
+  }
+
   // ── end pure helpers ───────────────────────────────────────────────────
 
   async function graphql(query, variables) {
@@ -1217,12 +1253,13 @@
       '<div class="auto-seek-tl-top"><button type="button" class="auto-seek-tl-head">' +
       '<span class="auto-seek-tl-title">Acts</span> <span class="auto-seek-tl-status"></span>' +
       '<span class="auto-seek-tl-found" hidden></span><span class="auto-seek-tl-now" hidden>Now: <b></b></span>' +
-      '<span class="auto-seek-tl-chevron" aria-hidden="true">▾</span></button></div>' +
+      '<span class="auto-seek-tl-chevron" aria-hidden="true">▾</span></button>' + ZOOM_HTML + '</div>' +
       '<div class="auto-seek-tl-body"><div class="auto-seek-tl-rows"></div>' +
       '<button type="button" class="auto-seek-tl-more" hidden></button>' +
       '<span class="auto-seek-tl-scanline" hidden><i class="auto-seek-tl-scanthumb" hidden><b></b></i></span><span class="auto-seek-tl-playhead" hidden></span><span class="auto-seek-tl-cross" hidden></span>' +
       '<div class="auto-seek-tl-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-tl-peek-text"></span>' +
-      '<span class="auto-seek-tl-peek-acts"></span></div></div>';
+      '<span class="auto-seek-tl-peek-acts"></span></div>' +
+      '<span class="auto-seek-tl-hint" hidden>Ctrl + scroll (or pinch) to zoom</span></div>';
     const head = panel.querySelector(".auto-seek-tl-head");
     head.setAttribute("aria-expanded", String(!panel.classList.contains("is-collapsed")));
     head.addEventListener("click", () => {
@@ -1237,6 +1274,7 @@
       else if (view.timelineAnswer) paintTimeline(view, view.timelineAnswer);
     });
     const rows = panel.querySelector(".auto-seek-tl-rows");
+    attachZoom(view, panel);
     // A tap on a lane plays from there; on an act's name, from the act's next
     // stop (where it starts, then each later peak, then round again). When an
     // extension asks for it (see keepPaused), a paused video stays paused.
@@ -1250,6 +1288,13 @@
     });
     rows.addEventListener("click", (event) => {
       if (current !== view) return;
+      if (view.zoomDragged) { view.zoomDragged = false; return; } // that was a drag, not a tap
+      if (event.target.closest(".auto-seek-tl-frame")) {
+        seekPlayer(view, Number(event.target.closest(".auto-seek-tl-frame").dataset.time));
+        view.userSeeked = true;
+        if (view.video.paused && !view.keepPaused) playVideo(view).catch(() => {});
+        return;
+      }
       const chapter = event.target.closest(".auto-seek-tl-chapter");
       if (chapter) {
         seekPlayer(view, Number(chapter.dataset.from));
@@ -1269,15 +1314,13 @@
         seekPlayer(view, stop.time);
         view.userSeeked = true;
         if (view.video.paused && !view.keepPaused) playVideo(view).catch(() => {});
+        followZoom(view, stop.time);
         const where = stops.length > 1 ? ` ${stop.index + 1}/${stops.length}` : "";
         toast(view, `${actLabel(act)}${where} · ${formatTime(stop.time)}${stop.wrapped && stops.length > 1 ? " (back to the first)" : ""}`,
           () => setTime(view, before));
         return;
       }
-      if (lane && view.timelineDuration) {
-        const box = lane.getBoundingClientRect();
-        time = (Math.min(Math.max(event.clientX - box.left, 0), box.width) / box.width) * view.timelineDuration;
-      }
+      if (lane && view.timelineDuration) time = laneTime(view, lane, event.clientX);
       if (time == null) return;
       seekPlayer(view, time);
       view.userSeeked = true;
@@ -1357,18 +1400,19 @@
   }
 
   function alignTimeline(view) {
-    movePlayhead(view);
+    applyZoom(view);
   }
 
   // A line across the lanes at `time` (the playhead, or where the scan is).
   function placeLine(view, line, time) {
     if (!line || !view.timelineDuration || time == null) { if (line) line.hidden = true; return; }
-    const lane = view.timeline.querySelector(".auto-seek-tl-lane");
+    const lane = shownLane(view.timeline);
     if (!lane) { line.hidden = true; return; }
     const body = line.parentElement.getBoundingClientRect();
     const box = lane.getBoundingClientRect();
-    line.hidden = false;
-    line.style.left = `${box.left - body.left + box.width * Math.min(1, Math.max(0, time / view.timelineDuration))}px`;
+    const [from, to] = zoomOf(view);
+    line.hidden = time < from - 0.01 || time > to + 0.01; // off to a side of the zoomed part
+    line.style.left = `${box.left - body.left + (box.width * (Math.min(to, Math.max(from, time)) - from)) / (to - from)}px`;
   }
 
   function movePlayhead(view) {
@@ -1430,9 +1474,13 @@
         `title="${actLabel(act)} · ${formatTime(from)}">${width > 9 ? `<span>${actLabel(act)}</span>` : ""}</button>`;
     }).join("");
     box.hidden = box.previousElementSibling.hidden = !segments.length;
+    box.insertAdjacentHTML("beforeend", ZOOM_WINDOW_HTML);
+    placeZoomWindow(view);
   }
 
-  const CHAPTERS_HTML = '<span class="auto-seek-tl-chapters-label" hidden>Top act</span><div class="auto-seek-tl-chapters" hidden></div>';
+  const CHAPTERS_HTML = '<span class="auto-seek-tl-chapters-label" hidden>Top act</span><div class="auto-seek-tl-chapters" hidden></div>' +
+    '<span class="auto-seek-tl-ruler-label"></span><div class="auto-seek-tl-ruler" aria-hidden="true"></div>' +
+    '<span class="auto-seek-tl-frames-label" hidden>Frames</span><div class="auto-seek-tl-frames" hidden></div>';
 
   // An act's stops (see actStops) over the frames scanned so far (while a
   // scan runs, only those its line has revealed).
@@ -1461,8 +1509,9 @@
       const lane = event.target.closest(".auto-seek-tl-lane");
       const duration = view.timelineDuration;
       if (!lane || !duration) { hide(); return; }
+      if (view.pinch || panel.classList.contains("is-panning")) { hide(); return; }
       const box = lane.getBoundingClientRect();
-      const time = ((event.clientX - box.left) / box.width) * duration;
+      const time = laneTime(view, lane, event.clientX);
       const j = view.timelineActs?.indexOf(lane.dataset.act) ?? -1;
       const near = nearestFrame(view, time); // nothing the scan line hasn't revealed yet
       if (!near || j < 0) { hide(); return; }
@@ -1477,7 +1526,8 @@
         .sort((a, b) => b[0] - a[0]).slice(0, 3)
         .map(([percent, act]) => `<span style="--as-c:${actColour(act)}">${actLabel(act)} ${percent}%</span>`).join("");
       const body = peek.parentElement.getBoundingClientRect();
-      const x = box.left - body.left + (box.width * at) / duration;
+      const [from, to] = zoomOf(view);
+      const x = box.left - body.left + (box.width * (at - from)) / (to - from);
       peek.style.left = `${Math.min(Math.max(x, 85), body.width - 85)}px`;
       peek.style.top = `${box.top - body.top}px`;
       peek.hidden = false;
@@ -1499,6 +1549,300 @@
     rows.addEventListener("pointerleave", hide);
   }
 
+  // ── zoom ──
+  // The lanes show view.zoom, [from, to) of the scene. Each lane clips a
+  // track (its bars and marks, placed in % of the scene) that two variables
+  // on the panel widen and shift, so zooming moves no element by itself.
+  // Ctrl + scroll or a pinch zooms where it points, a drag or a sideways
+  // scroll pans, a double-click fits the stretch under it, and the window
+  // on the top-act strip (always the whole scene) shows and moves the part.
+  const ZOOM_HTML = '<span class="auto-seek-tl-zoom" hidden>' +
+    '<button type="button" data-zoom="out" aria-label="Zoom out" title="Zoom out">−</button>' +
+    '<span class="auto-seek-tl-zoom-label"></span>' +
+    '<button type="button" data-zoom="in" aria-label="Zoom in" title="Zoom in (or Ctrl + scroll, or pinch, over the lanes)">+</button>' +
+    '<button type="button" data-zoom="fit" title="Show the whole scene">Fit</button></span>';
+  const ZOOM_WINDOW_HTML = '<i class="auto-seek-tl-shade is-before"></i><i class="auto-seek-tl-shade is-after"></i>' +
+    '<i class="auto-seek-tl-window" title="Drag to move along the scene"></i>';
+  const FRAMES_UNDER = 300; // a row of frames above the lanes when this little (s) or less shows
+
+  function zoomOf(view) {
+    const duration = view.timelineDuration || 0;
+    if (!view.zoom) return [0, duration];
+    return zoomWindow(view.zoom[0], view.zoom[1], duration, leastSpan(view));
+  }
+
+  // Never under six frames across (a minute, at the usual spacing), nor
+  // more than about 120×.
+  function leastSpan(view) {
+    const spacing = view.timelineAnswer?.spacing || view.tl?.spacing || 10;
+    return Math.max(6 * spacing, (view.timelineDuration || 0) / 120);
+  }
+
+  function shownLane(panel) {
+    return [...(panel?.querySelectorAll(".auto-seek-tl-lane") || [])].find((lane) => lane.offsetParent && lane.clientWidth);
+  }
+
+  // The scene time under clientX on a lane, zoomed or not.
+  function laneTime(view, lane, clientX) {
+    const box = lane.getBoundingClientRect();
+    const [from, to] = zoomOf(view);
+    return from + (Math.min(Math.max(clientX - box.left, 0), box.width) / box.width) * (to - from);
+  }
+
+  function setZoom(view, from, to) {
+    const duration = view.timelineDuration;
+    if (!(duration > 0)) return;
+    view.zoom = zoomWindow(from, to, duration, leastSpan(view));
+    if (view.zoomQueued) return;
+    view.zoomQueued = true;
+    requestAnimationFrame(() => { view.zoomQueued = false; applyZoom(view); });
+  }
+
+  function animateZoom(view, from, to) {
+    const duration = view.timelineDuration;
+    if (!(duration > 0)) return;
+    [from, to] = zoomWindow(from, to, duration, leastSpan(view));
+    cancelAnimationFrame(view.zoomAnimation);
+    if (reducedMotion()) { setZoom(view, from, to); return; }
+    const [a, b] = zoomOf(view);
+    const start = performance.now();
+    const tick = (now) => {
+      const k = Math.min(1, (now - start) / 280);
+      const eased = 1 - (1 - k) ** 3;
+      setZoom(view, a + (from - a) * eased, b + (to - b) * eased);
+      if (k < 1) view.zoomAnimation = requestAnimationFrame(tick);
+    };
+    view.zoomAnimation = requestAnimationFrame(tick);
+  }
+
+  // Zoom by `factor` (under 1 is in) keeping `time` where it is on screen.
+  function zoomAround(view, time, factor, animate = false) {
+    const [a, b] = zoomOf(view);
+    const span = Math.min(view.timelineDuration, Math.max(leastSpan(view), (b - a) * factor));
+    const k = (time - a) / (b - a);
+    (animate ? animateZoom : setZoom)(view, time - k * span, time - k * span + span);
+  }
+
+  // Stepping to a moment outside the zoomed part brings it into view.
+  function followZoom(view, time) {
+    const [a, b] = zoomOf(view);
+    const span = b - a;
+    if (span >= view.timelineDuration - 0.5 || (time > a + span * 0.1 && time < b - span * 0.1)) return;
+    animateZoom(view, time - span * 0.3, time + span * 0.7);
+  }
+
+  // A double-click fits the stretch where the act clearly is around `time`,
+  // or zooms in three times there.
+  function zoomToStretch(view, act, time) {
+    const j = view.timelineActs?.indexOf(act) ?? -1;
+    const spacing = view.timelineAnswer?.spacing || view.tl?.spacing || 10;
+    const points = j > 0 ? (view.timelineFrames || []).map(([at, scores]) => [at, scores[j] / 100]) : [];
+    const run = hitRuns(points, view.timelineThreshold ?? 0.8, spacing).find(([from, to]) => time >= from - spacing && time <= to + spacing);
+    if (run) {
+      const pad = Math.max(2 * spacing, (run[1] - run[0]) * 0.25);
+      animateZoom(view, run[0] - pad, run[1] + pad);
+    } else {
+      zoomAround(view, time, 1 / 3, true);
+    }
+  }
+
+  function placeZoomWindow(view) {
+    const strip = view.timeline?.querySelector(".auto-seek-tl-chapters");
+    const duration = view.timelineDuration;
+    if (!strip || !(duration > 0)) return;
+    const [a, b] = zoomOf(view);
+    const zoomed = b - a < duration - 0.5;
+    const percent = (time) => `${((100 * time) / duration).toFixed(3)}%`;
+    strip.querySelectorAll(".auto-seek-tl-shade, .auto-seek-tl-window").forEach((element) => { element.hidden = !zoomed; });
+    const window_ = strip.querySelector(".auto-seek-tl-window");
+    if (!window_ || !zoomed) return;
+    window_.style.left = percent(a);
+    window_.style.width = percent(b - a);
+    strip.querySelector(".is-before").style.width = percent(a);
+    strip.querySelector(".is-after").style.width = percent(duration - b);
+  }
+
+  // Everything that follows the zoomed part: the lanes' scale, how they are
+  // drawn, the window, the ruler, the frames and the lines.
+  function applyZoom(view) {
+    const panel = view.timeline;
+    const duration = view.timelineDuration;
+    if (!panel || !(duration > 0)) { movePlayhead(view); return; }
+    const [a, b] = zoomOf(view);
+    const zoomed = b - a < duration - 0.5;
+    panel.style.setProperty("--as-zoom", (duration / (b - a)).toFixed(5));
+    panel.style.setProperty("--as-shift", (a / duration).toFixed(6));
+    panel.classList.toggle("is-zoomed", zoomed);
+    const ruler = panel.querySelector(".auto-seek-tl-ruler");
+    const width = ruler?.clientWidth || 0;
+    const spacing = view.timelineAnswer?.spacing || view.tl?.spacing || 10;
+    // Bars once frames are about 5 px apart (and always while scanning).
+    panel.classList.toggle("is-overview", !view.tl && (spacing / (b - a)) * width < 5);
+    const controls = panel.querySelector(".auto-seek-tl-zoom");
+    controls.hidden = !panel.querySelector(".auto-seek-tl-row");
+    controls.querySelector(".auto-seek-tl-zoom-label").textContent = zoomed ? `${formatTime(a)}–${formatTime(b)}` : "Whole scene";
+    placeZoomWindow(view);
+    paintRuler(view, a, b, width);
+    paintFrames(view);
+    movePlayhead(view);
+    if (view.tl) placeLine(view, panel.querySelector(".auto-seek-tl-scanline"), view.tl.cursor);
+    if (panel.querySelector(".auto-seek-tl-cross:not([hidden])")) panel.querySelector(".auto-seek-tl-cross").hidden = true;
+  }
+
+  function paintRuler(view, a, b, width) {
+    const ruler = view.timeline.querySelector(".auto-seek-tl-ruler");
+    if (!ruler) return;
+    if (!width) { ruler.innerHTML = ""; return; }
+    const [major, minor] = rulerSteps(b - a, width);
+    let html = "";
+    for (let t = Math.ceil(a / minor) * minor; t <= b; t += minor) {
+      const left = (100 * (t - a)) / (b - a);
+      const big = t % major === 0;
+      html += `<i${big ? ' class="is-major"' : ""} style="left:${left.toFixed(2)}%"></i>`;
+      if (big && (left / 100) * width < width - 34) html += `<span style="left:${left.toFixed(2)}%">${formatTime(t)}</span>`;
+    }
+    ruler.innerHTML = html;
+  }
+
+  // Close in, Stash's seek-bar thumbnails along the top, as many as fit
+  // side by side; a tap plays from one.
+  async function paintFrames(view) {
+    const panel = view.timeline;
+    const row = panel?.querySelector(".auto-seek-tl-frames");
+    if (!row) return;
+    const [a0, b0] = zoomOf(view);
+    const sprite = b0 - a0 <= FRAMES_UNDER ? await sceneSprite(view.id) : null;
+    const [a, b] = zoomOf(view); // it may have moved meanwhile
+    const width = panel.querySelector(".auto-seek-tl-ruler")?.clientWidth || 0;
+    const show = Boolean(sprite?.cues?.length) && b - a <= FRAMES_UNDER && width > 0;
+    if (!show) { row.innerHTML = ""; row.hidden = row.previousElementSibling.hidden = true; return; }
+    const height = 40; // auto-seek.css: .auto-seek-tl-frames
+    const url = String(sprite.sprite).replace(/"/g, "%22");
+    let html = "";
+    let right = -Infinity;
+    for (const cue of sprite.cues) {
+      if (cue.end < a || cue.start > b) continue;
+      const scale = height / cue.h;
+      const x = ((cue.start - a) / (b - a)) * width;
+      if (x < right + 2) continue;
+      right = x + cue.w * scale;
+      html += `<button type="button" class="auto-seek-tl-frame" data-time="${cue.start}" title="Play from ${formatTime(cue.start)}" ` +
+        `style="left:${x.toFixed(1)}px;width:${(cue.w * scale).toFixed(1)}px">` +
+        `<b style="width:${cue.w}px;height:${cue.h}px;background-image:url(&quot;${url}&quot;);background-position:-${cue.x}px -${cue.y}px;transform:scale(${scale.toFixed(4)})"></b>` +
+        `<span>${formatTime(cue.start)}</span></button>`;
+    }
+    row.innerHTML = html;
+    row.hidden = row.previousElementSibling.hidden = !html;
+  }
+
+  function attachZoom(view, panel) {
+    const rows = panel.querySelector(".auto-seek-tl-rows");
+    const hint = panel.querySelector(".auto-seek-tl-hint");
+    const zoomable = (target) => target.closest?.(".auto-seek-tl-lane, .auto-seek-tl-ruler, .auto-seek-tl-frames");
+    const centre = () => {
+      const [a, b] = zoomOf(view);
+      const time = timeOf(view);
+      return time >= a && time <= b ? time : (a + b) / 2;
+    };
+    panel.querySelector(".auto-seek-tl-zoom").addEventListener("click", (event) => {
+      const action = event.target.closest("[data-zoom]")?.dataset.zoom;
+      if (action === "in") zoomAround(view, centre(), 0.5, true);
+      else if (action === "out") zoomAround(view, centre(), 2, true);
+      else if (action === "fit") animateZoom(view, 0, view.timelineDuration);
+    });
+    let hintTimer;
+    rows.addEventListener("wheel", (event) => {
+      const lane = zoomable(event.target);
+      if (!lane || !view.timelineDuration) return;
+      const ruler = panel.querySelector(".auto-seek-tl-ruler");
+      const time = laneTime(view, ruler || lane, event.clientX);
+      if (event.ctrlKey || event.metaKey) { // a trackpad pinch arrives as Ctrl + scroll
+        event.preventDefault();
+        zoomAround(view, time, Math.exp(Math.max(-50, Math.min(50, event.deltaY)) * 0.01));
+        return;
+      }
+      const sideways = event.shiftKey ? event.deltaY : event.deltaX;
+      if (Math.abs(sideways) > Math.abs(event.shiftKey ? 0 : event.deltaY)) {
+        if (!panel.classList.contains("is-zoomed")) return;
+        event.preventDefault();
+        const [a, b] = zoomOf(view);
+        const shift = (sideways / (ruler?.clientWidth || 600)) * (b - a);
+        setZoom(view, a + shift, b + shift);
+        return;
+      }
+      hint.hidden = false; // a plain scroll still scrolls the page
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => { hint.hidden = true; }, 1200);
+    }, { passive: false });
+    rows.addEventListener("dblclick", (event) => {
+      const lane = event.target.closest(".auto-seek-tl-lane");
+      if (!lane || !view.timelineDuration) return;
+      zoomToStretch(view, lane.dataset.act, laneTime(view, lane, event.clientX));
+    });
+    // Drags: a mouse pans the zoomed lanes (a finger keeps scrubbing the
+    // preview); two fingers pinch; the window on the top-act strip moves.
+    const pointers = new Map();
+    let drag = null;
+    rows.addEventListener("pointerdown", (event) => {
+      const onWindow = event.target.closest(".auto-seek-tl-window");
+      const onStrip = event.target.closest(".auto-seek-tl-chapters");
+      if (!onWindow && !zoomable(event.target)) return;
+      pointers.set(event.pointerId, event.clientX);
+      if (pointers.size === 2 && event.pointerType === "touch" && !onStrip) {
+        const [x1, x2] = [...pointers.values()];
+        const ruler = panel.querySelector(".auto-seek-tl-ruler").getBoundingClientRect();
+        const [a, b] = zoomOf(view);
+        view.pinch = { distance: Math.abs(x1 - x2) || 1, middle: (x1 + x2) / 2, a, b, left: ruler.left, width: ruler.width };
+        drag = null;
+        return;
+      }
+      const strip = panel.querySelector(".auto-seek-tl-chapters");
+      const [a, b] = zoomOf(view);
+      if (onWindow) drag = { x: event.clientX, a, b, per: view.timelineDuration / strip.clientWidth, moved: false };
+      else if (event.pointerType === "mouse" && panel.classList.contains("is-zoomed")) {
+        drag = { x: event.clientX, a, b, per: -(b - a) / (panel.querySelector(".auto-seek-tl-ruler").clientWidth || 1), moved: false };
+      }
+    });
+    rows.addEventListener("pointermove", (event) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, event.clientX);
+      const pinch = view.pinch;
+      if (pinch && pointers.size === 2) {
+        const [x1, x2] = [...pointers.values()];
+        const distance = Math.abs(x1 - x2) || 1;
+        const middle = (x1 + x2) / 2;
+        const span0 = pinch.b - pinch.a;
+        const span = Math.min(view.timelineDuration, Math.max(leastSpan(view), (span0 * pinch.distance) / distance));
+        // The moment under the fingers stays under them.
+        const anchor = pinch.a + ((pinch.middle - pinch.left) / pinch.width) * span0;
+        const from = anchor - ((middle - pinch.left) / pinch.width) * span;
+        setZoom(view, from, from + span);
+        return;
+      }
+      if (!drag) return;
+      if (!drag.moved && Math.abs(event.clientX - drag.x) > 4) {
+        drag.moved = true;
+        // Only now: captured from the press, the click after a tap would land on the rows, not the lane.
+        rows.setPointerCapture?.(event.pointerId);
+      }
+      if (!drag.moved) return;
+      panel.classList.add("is-panning");
+      const shift = (event.clientX - drag.x) * drag.per;
+      setZoom(view, drag.a + shift, drag.b + shift);
+    });
+    const end = (event) => {
+      pointers.delete(event.pointerId);
+      if (pointers.size < 2) view.pinch = null;
+      if (drag?.moved) view.zoomDragged = true; // the click that follows isn't a tap
+      if (pointers.size === 0) { drag = null; panel.classList.remove("is-panning"); }
+    };
+    rows.addEventListener("pointerup", end);
+    rows.addEventListener("pointercancel", end);
+    // A click lands right after pointerup; one that never comes (a drag that
+    // ended off the panel) mustn't eat the next tap.
+    rows.addEventListener("pointerdown", () => { view.zoomDragged = false; }, true);
+  }
+
   // ── the scan, played back smoothly ──
   // The page stays one server update behind: a red line glides towards the
   // newest position at the pace the updates arrive, and the bars pop up as
@@ -1513,7 +1857,7 @@
     row.dataset.act = name;
     row.style.setProperty("--as-c", actColour(name));
     row.innerHTML = nameButton(actLabel(name), null, false, 0) +
-      `<div class="auto-seek-tl-lane" data-act="${name}"><svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"></svg></div>`;
+      `<div class="auto-seek-tl-lane" data-act="${name}"><div class="auto-seek-tl-track"><svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true"></svg></div></div>`;
     return row;
   }
 
@@ -1624,7 +1968,7 @@
       const mark = document.createElement("i");
       mark.className = "auto-seek-tl-mark pop ring";
       mark.style.left = `${((100 * first) / tl.duration).toFixed(2)}%`;
-      row.querySelector(".auto-seek-tl-lane").appendChild(mark);
+      row.querySelector(".auto-seek-tl-track").appendChild(mark);
       if (wasShown) slideRow(list, row);
       else { row.classList.add("is-new"); placeRow(list, row); } // it opens up in its place
       tl.found = (tl.found || 0) + 1;
@@ -1673,7 +2017,8 @@
   function scanThumb(view, time) {
     const thumb = view.timeline?.querySelector(".auto-seek-tl-scanthumb");
     if (!thumb || !view.timelineDuration) return;
-    thumb.style.transform = `translateX(${(-100 * Math.min(1, Math.max(0, time / view.timelineDuration))).toFixed(1)}%)`;
+    const [from, to] = zoomOf(view);
+    thumb.style.transform = `translateX(${(-100 * Math.min(1, Math.max(0, (time - from) / (to - from)))).toFixed(1)}%)`;
     spriteThumb(view, thumb, time, 40); // auto-seek.css: 40 px tall
   }
 
@@ -1702,6 +2047,7 @@
     if (!tl) {
       // What was scanned before this page opened shows at once.
       panel.querySelector(".auto-seek-tl-rows").innerHTML = CHAPTERS_HTML;
+      requestAnimationFrame(() => applyZoom(view));
       tl = view.tl = {
         acts: answer.acts, duration, spacing, threshold: answer.threshold ?? 0.8,
         rows: new Map(), revealed: [], shown: -1, cursor: position, target: position, speed: 0, at: now, final: null,
@@ -1738,14 +2084,24 @@
     return near;
   }
 
+  // A lane drawn twice: one bar per frame, a frame step wide, at its score
+  // (shown zoomed in, and while scanning), and for the whole scene a faint
+  // curve of the scores below the line with a solid block wherever the act
+  // clearly is (see hitRuns), so a row reads at a glance.
   function laneSvg(points, duration, threshold, spacing) {
-    // One bar per frame, a frame step wide, at a fixed place on the lane.
-    const width = Math.max(1, (1000 * spacing) / duration);
+    const x = (time) => ((1000 * time) / duration).toFixed(1);
+    const width = Math.max(0.2, (1000 * spacing) / duration);
     const bars = points.map(([time, score]) => {
       const cls = score >= threshold ? ' class="hit"' : "";
-      return `<rect${cls} x="${((1000 * time) / duration).toFixed(1)}" y="${(10 * (1 - score)).toFixed(2)}" width="${width.toFixed(1)}" height="${(10 * score).toFixed(2)}"/>`;
+      return `<rect${cls} x="${x(time)}" y="${(10 * (1 - score)).toFixed(2)}" width="${width.toFixed(2)}" height="${(10 * score).toFixed(2)}"/>`;
     });
-    return `<svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true">${bars.join("")}</svg>`;
+    const curve = points.length
+      ? `<path d="M${x(points[0][0])} 10${points.map(([time, score]) => `L${x(time + spacing / 2)} ${(10 - 9.4 * Math.min(score, threshold)).toFixed(2)}`).join("")}L${x(points[points.length - 1][0] + spacing)} 10Z"/>`
+      : "";
+    const blocks = hitRuns(points, threshold, spacing)
+      .map(([from, to]) => `<rect class="block" x="${x(from)}" y="1" width="${Math.max(1.5, (1000 * (to - from)) / duration).toFixed(1)}" height="8"/>`);
+    return `<svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true">` +
+      `<g class="auto-seek-tl-bars">${bars.join("")}</g><g class="auto-seek-tl-overview">${curve}${blocks.join("")}</g></svg>`;
   }
 
   function paintTimeline(view, answer) {
@@ -1786,13 +2142,13 @@
         return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}` +
           `${stops.length > 1 ? ` data-stops="${stops.join(",")}"` : ""} style="--as-c:${actColour(row.name)}">` +
           nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak, stops.length) +
-          `<div class="auto-seek-tl-lane" data-act="${row.name}">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div>`;
+          `<div class="auto-seek-tl-lane" data-act="${row.name}"><div class="auto-seek-tl-track">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div></div>`;
       }).join("");
     }
     paintChapters(view, view.timelineFrames);
     placeLine(view, panel.querySelector(".auto-seek-tl-scanline"), null);
     emit(view, "rows");
-    movePlayhead(view);
+    applyZoom(view);
   }
 
   function watchTimeline(view) {

@@ -697,7 +697,35 @@
   overflow: hidden;
 }
 
+/* Each lane clips a track holding its bars and marks (placed in % of the
+   scene); zooming widens and shifts the track (see applyZoom). */
+.auto-seek-tl-track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% * var(--as-zoom, 1));
+  transform: translateX(calc(-100% * var(--as-shift, 0)));
+}
 .auto-seek-tl-lane svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* The whole scene: a faint curve of the low scores and a solid block where
+   the act clearly is. Zoomed in (and while scanning): a bar per frame at its
+   score, against a dashed line at the threshold. */
+.auto-seek-tl-overview path { fill: rgba(255, 255, 255, 0.13); }
+.auto-seek-tl-lane .auto-seek-tl-overview rect.block { fill: var(--as-c, var(--as-tl-hit)); }
+.auto-seek-tl-overview, .auto-seek-tl-bars { transition: opacity 0.2s; }
+.auto-seek-timeline:not(.is-overview) .auto-seek-tl-overview,
+.auto-seek-timeline.is-overview .auto-seek-tl-bars { opacity: 0; }
+.auto-seek-timeline:not(.is-overview) .auto-seek-tl-lane::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 20%;
+  border-top: 1px dashed rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
 .auto-seek-tl-lane rect { fill: rgba(255, 255, 255, 0.2); }
 .auto-seek-tl-lane rect.hit { fill: var(--as-c, var(--as-tl-hit)); }
 
@@ -982,4 +1010,133 @@
     position: sticky;
     top: var(--auto-seek-tabs-top, 3.5rem);
   }
+}
+
+/* ── zoom ── */
+.auto-seek-tl-zoom { display: flex; align-items: center; gap: 2px; flex: none; }
+.auto-seek-tl-zoom[hidden], .auto-seek-timeline.is-collapsed .auto-seek-tl-zoom { display: none; }
+.auto-seek-tl-zoom button {
+  min-width: 1.6rem;
+  padding: 0 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 0.8rem;
+  line-height: 1.3rem;
+  cursor: pointer;
+}
+.auto-seek-tl-zoom button:hover, .auto-seek-tl-zoom button:focus-visible { background: rgba(255, 255, 255, 0.14); }
+.auto-seek-tl-zoom-label {
+  min-width: 7.5em;
+  padding: 0 0.25rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.auto-seek-tl-lane { touch-action: pan-y; }
+.auto-seek-timeline.is-zoomed .auto-seek-tl-lane { cursor: grab; }
+.auto-seek-timeline.is-panning .auto-seek-tl-lane { cursor: grabbing; }
+
+/* The zoomed part on the top-act strip: the rest shaded, a window to drag. */
+.auto-seek-tl-shade { position: absolute; top: 0; bottom: 0; background: rgba(10, 14, 16, 0.6); pointer-events: none; }
+.auto-seek-tl-shade.is-before { left: 0; }
+.auto-seek-tl-shade.is-after { right: 0; }
+.auto-seek-tl-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border: 1.5px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 8px rgba(255, 255, 255, 0.25);
+  cursor: grab;
+  touch-action: none;
+}
+.auto-seek-tl-shade[hidden], .auto-seek-tl-window[hidden] { display: none; }
+.auto-seek-timeline.is-panning .auto-seek-tl-window { cursor: grabbing; }
+
+/* The ruler: minutes for the whole scene, down to 5 s steps close in. */
+.auto-seek-tl-ruler {
+  grid-column: -2 / -1;
+  position: relative;
+  height: 0.9rem;
+  overflow: hidden;
+}
+.auto-seek-tl-ruler i {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.auto-seek-tl-ruler i.is-major { height: 6px; background: rgba(255, 255, 255, 0.45); }
+.auto-seek-tl-ruler span {
+  position: absolute;
+  top: -1px;
+  padding-left: 3px;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+  white-space: nowrap;
+}
+
+/* Close in, Stash's thumbnails along the top: tap one to play from there. */
+.auto-seek-tl-frames-label { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.5; }
+.auto-seek-tl-frames-label[hidden], .auto-seek-tl-frames[hidden] { display: none; }
+.auto-seek-tl-frames {
+  grid-column: -2 / -1;
+  position: relative;
+  height: 40px;
+  margin-bottom: 2px;
+  overflow: hidden;
+}
+.auto-seek-tl-frame {
+  position: absolute;
+  top: 0;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: #111;
+  overflow: hidden;
+  cursor: pointer;
+}
+.auto-seek-tl-frame b { position: absolute; top: 0; left: 0; display: block; transform-origin: 0 0; background-repeat: no-repeat; }
+.auto-seek-tl-frame span {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  padding: 0 3px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.auto-seek-tl-frame:hover, .auto-seek-tl-frame:focus-visible { box-shadow: 0 0 0 2px #fff; }
+
+.auto-seek-tl-hint {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  z-index: 6;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 0.8rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.auto-seek-tl-hint[hidden] { display: none; }
+
+@media (max-width: 500px) {
+  .auto-seek-tl-zoom-label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auto-seek-tl-overview, .auto-seek-tl-bars { transition: none; }
 }
