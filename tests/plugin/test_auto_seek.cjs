@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, "../../auto-seek/auto-seek.j
 const context = { Math, String, Number, parseFloat };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf("  // ── pure helpers"), source.indexOf("  // ── end pure helpers")), context);
-const { formatTime, parseVtt, spriteCue, timelineRows, actStops, nextStop, heatColor, lockSteps, chapters, actColour, spanText } = context;
+const { formatTime, parseVtt, spriteCue, timelineRows, actStops, nextStop, heatColor, lockSteps, chapters, actColour, spanText, hitRuns, zoomWindow, rulerSteps } = context;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // Times on the toasts and the pill: m:ss, with hours when needed.
@@ -93,3 +93,22 @@ assert.equal(actColour("something new"), "#f5b400");
 assert.equal(spanText(40), "40 s");
 assert.equal(spanText(14 * 60 + 5), "14 m");
 assert.equal(spanText(2 * 3600 + 14 * 60), "2 h 14 m");
+
+// Where an act clearly is, for the lanes' overview: runs past the line, a
+// one-frame dip inside one.
+{
+  const points = [[0, 0.9], [10, 0.85], [20, 0.5], [30, 0.95], [40, 0.2], [50, 0.1], [60, 0.81], [70, 0.3]];
+  assert.deepEqual(plain(hitRuns(points, 0.8, 10)), [[0, 40], [60, 70]]);
+  assert.deepEqual(plain(hitRuns([[0, 0.5]], 0.8, 10)), []);
+}
+
+// The zoomed window stays inside the scene and no narrower than allowed.
+assert.deepEqual(plain(zoomWindow(-30, 90, 1800, 60)), [0, 120]);
+assert.deepEqual(plain(zoomWindow(1790, 1800, 1800, 60)), [1740, 1800]);
+assert.deepEqual(plain(zoomWindow(0, 5000, 1800, 60)), [0, 1800]);
+assert.deepEqual(plain(zoomWindow(10, 20, 40, 60)), [0, 40]); // a scene shorter than the least
+
+// Ruler ticks: whole minutes across a long scene, seconds when close.
+assert.deepEqual(plain(rulerSteps(1800, 700)), [300, 120]);
+assert.deepEqual(plain(rulerSteps(120, 700)), [10, 5]);
+assert.deepEqual(plain(rulerSteps(100000, 300)), [3600, 1800]);

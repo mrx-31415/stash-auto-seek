@@ -41,7 +41,9 @@ def timeline(page: Page, marked):  # noqa: F811
         body = route.request.post_data or ""
         if '"op":"timeline"' in body.replace(" ", ""):
             data = {"data": {"runPluginOperation": answer(marked["duration"])}}
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+            route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(data)
+            )
         else:
             route.continue_()
 
@@ -51,8 +53,12 @@ def timeline(page: Page, marked):  # noqa: F811
 
 def open_timeline(page: Page, base_url: str, scene) -> None:
     open_scene(page, base_url, scene)
-    page.locator(".video-js video").evaluate("video => { video.muted = true; video.pause(); }")
-    expect(page.locator(".auto-seek-tl-row[data-act='kissing']")).to_be_visible(timeout=30_000)
+    page.locator(".video-js video").evaluate(
+        "video => { video.muted = true; video.pause(); }"
+    )
+    expect(page.locator(".auto-seek-tl-row[data-act='kissing']")).to_be_visible(
+        timeout=30_000
+    )
 
 
 def test_the_playhead_is_a_line_that_brightens_while_playing(
@@ -113,7 +119,9 @@ def test_the_top_act_strip_and_the_act_on_now(page, base_url, timeline, errors) 
     assert errors == []
 
 
-def test_reviewing_keeps_a_paused_video_paused(page, base_url, timeline, errors) -> None:
+def test_reviewing_keeps_a_paused_video_paused(
+    page, base_url, timeline, errors
+) -> None:
     open_timeline(page, base_url, timeline)
     video = page.locator(".video-js video")
     name = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-name")
@@ -203,7 +211,9 @@ def test_the_review_queue_steps_through_its_spots_from_the_keyboard(
         "models": {"yours": "a", "teacher": "b"},
         "scenes": [{"id": timeline["id"], "spots": spots}],
     }
-    in_stash(f"mkdir -p $(dirname {QUEUE}) && cat > {QUEUE} <<'EOF'\n{json.dumps(queue)}\nEOF")
+    in_stash(
+        f"mkdir -p $(dirname {QUEUE}) && cat > {QUEUE} <<'EOF'\n{json.dumps(queue)}\nEOF"
+    )
     try:
         # The entry point: "Review 1" in Stash's navigation bar opens the scene.
         page.goto(f"{base_url}/scenes", wait_until="domcontentloaded")
@@ -213,7 +223,9 @@ def test_the_review_queue_steps_through_its_spots_from_the_keyboard(
         expect(page).to_have_url(re.compile(rf"/scenes/{timeline['id']}"))
         open_timeline(page, base_url, timeline)
         # Opened from the queue, review mode is already on.
-        expect(page.locator(".auto-seek-timeline")).to_have_class(re.compile(r"\bis-reviewing\b"))
+        expect(page.locator(".auto-seek-timeline")).to_have_class(
+            re.compile(r"\bis-reviewing\b")
+        )
         page.locator(".video-js video").evaluate("video => { video.currentTime = 0; }")
         bar = page.locator(".auto-seek-dev-queue")
         expect(bar).to_contain_text("2 of 2 spots left")
@@ -250,5 +262,43 @@ def test_the_review_queue_steps_through_its_spots_from_the_keyboard(
         assert errors == []
     finally:
         in_stash(f"rm -f {QUEUE}")
-        for t, act, _ in dev_operation(op="reviews", scene_id=timeline["id"])["reviews"]:
-            dev_operation(op="review", scene_id=timeline["id"], t=t, act=act, verdict=None)
+        for t, act, _ in dev_operation(op="reviews", scene_id=timeline["id"])[
+            "reviews"
+        ]:
+            dev_operation(
+                op="review", scene_id=timeline["id"], t=t, act=act, verdict=None
+            )
+
+
+def test_zooming_into_the_lanes(page, base_url, timeline, errors) -> None:
+    open_timeline(page, base_url, timeline)
+    panel = page.locator(".auto-seek-timeline")
+    label = page.locator(".auto-seek-tl-zoom-label")
+    expect(label).to_have_text("Whole scene")
+    page.locator('.auto-seek-tl-zoom [data-zoom="in"]').click()
+    expect(label).not_to_have_text("Whole scene")
+    expect(panel).to_have_class(re.compile(r"\bis-zoomed\b"))
+    expect(page.locator(".auto-seek-tl-window")).to_be_visible()
+    # A tap on a zoomed lane plays from the time under it, not the whole-scene one.
+    page.wait_for_timeout(400)  # the zoom eases in
+    span = panel.evaluate(
+        """panel => { const d = 40, z = +panel.style.getPropertyValue("--as-zoom"),
+           s = +panel.style.getPropertyValue("--as-shift"); return [s * d, d / z]; }"""
+    )
+    lane = page.locator(".auto-seek-tl-row[data-act='kissing'] .auto-seek-tl-lane")
+    box = lane.bounding_box()
+    lane.click(position={"x": box["width"] * 0.75, "y": box["height"] / 2})
+    page.locator(".video-js video").evaluate("video => video.pause()")
+    assert current_time(page) == pytest.approx(span[0] + 0.75 * span[1], abs=1)
+    # Ctrl + scroll zooms where it points (out here: one + is as close as a
+    # 40 s scene goes); Fit shows the whole scene.
+    before = label.text_content()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.keyboard.down("Control")
+    page.mouse.wheel(0, 40)
+    page.keyboard.up("Control")
+    expect(label).not_to_have_text(before or "")
+    page.locator('.auto-seek-tl-zoom [data-zoom="fit"]').click()
+    expect(label).to_have_text("Whole scene")
+    expect(page.locator(".auto-seek-tl-window")).to_be_hidden()
+    assert errors == []
