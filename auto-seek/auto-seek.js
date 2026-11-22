@@ -1826,7 +1826,7 @@
   const OWN_SETTINGS = new Set(["startStage", "accurateModel"]);
   const MODEL_OPTIONS = [
     { value: "fast", label: "Fast (ViT-B/32)", note: "The default. About 0.15 s a frame on two CPU threads." },
-    { value: "accurate", label: "Accurate (ViT-B/16)", note: "Finds starts a little more accurately, about four times as slowly (0.6 s a frame). Downloads in place of the fast model." },
+    { value: "accurate", label: "Accurate (ViT-B/16)", note: "Finds starts more accurately, most of all where sex positions begin; about four times as slowly (0.6 s a frame). Downloads in place of the fast model." },
   ];
 
   function StartSettings({ pluginID }) {

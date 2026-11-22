@@ -37,7 +37,7 @@ settings:
     type: STRING
   accurateModel:
     displayName: Use the accurate model
-    description: A larger image model (ViT-B/16 instead of B/32) that finds starts a little more accurately and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
+    description: A larger image model (ViT-B/16 instead of B/32) that finds starts more accurately, most of all where sex positions begin, and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
     type: BOOLEAN
   disableTimeline:
     displayName: Don't scan whole scenes

@@ -60,11 +60,12 @@ VERIFIED_PATH = os.path.join(DATA_DIR, "verified.json")
 CACHE_PATH = os.path.join(DATA_DIR, "cache.sqlite3")
 WORKER_LOCK_PATH = os.path.join(DATA_DIR, "worker.lock")
 
-# The models: CLIP (LAION-2B) with its last three blocks tuned to tell which
-# acts a frame shows, int8 weights, raw RGB bytes in. Two sizes: ViT-B/32 is
-# quicker, ViT-B/16 looks at four times the patches and finds starts a little
-# more accurately. Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
-HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/8fdb176bd763c498f6a695d7b9efd22067dbb83e/"
+# The models: CLIP (LAION-2B) with its last blocks tuned to tell which acts a
+# frame shows, int8 weights, raw RGB bytes in. Two sizes: ViT-B/32 is quicker,
+# ViT-B/16 looks at four times the patches and finds starts more accurately
+# (v2: trained on more hand-checked frames, one layer kept in float because int8
+# distorted its act scores). Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
+HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/d141ef3e5acbbab1774932bb2caac33037cddeb9/"
 MODELS = {
     "fast": {
         "path": "models/auto-seek-acts-b32-v1.onnx",
@@ -74,11 +75,11 @@ MODELS = {
         "id": "acts-b32-v1",
     },
     "accurate": {
-        "path": "models/auto-seek-acts-b16-v1.onnx",
-        "url": HF + "auto-seek-acts-b16-v1.onnx",
-        "sha256": "a41a4f7c1ad0e9e5ed1b231fd5b77882efdcfc266202ddaf6ce41f0bf9cf35a0",
-        "size": 87353144,
-        "id": "acts-b16-v1",
+        "path": "models/auto-seek-acts-b16-v2.onnx",
+        "url": HF + "auto-seek-acts-b16-v2.onnx",
+        "sha256": "f6997abf65ae54a89d16f2b1cad2d22e4349849fd983488bd1751f28ef263d9d",
+        "size": 103118723,
+        "id": "acts-b16-v2",
     },
 }
 ACTS = (
