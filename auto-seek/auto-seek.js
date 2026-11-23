@@ -42,6 +42,7 @@
   // The model's acts as the settings page shows them: [backend name, label,
   // other words a search finds it by]. The backend's names (auto_seek.py
   // ACTS) stay as they are; tests/test_settings_page.py keeps the two in step.
+  // Acts the backend drops (DROPPED) aren't listed.
   const ACT_GROUPS = [
     { name: "Tease", acts: [["striptease / tease", "Striptease / tease", "strip show dance pose"]] },
     {
@@ -61,7 +62,6 @@
         ["oral on him", "Blowjob", "bj oral on him suck deepthroat"],
         ["oral on her", "Eating pussy", "cunnilingus oral on her lick"],
         ["69", "69", "sixty-nine sixty nine"],
-        ["rimming", "Rimming", "anilingus rimjob"],
       ],
     },
     {

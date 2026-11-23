@@ -89,11 +89,14 @@ ACTS = (
     "side/spoon", "ballerina", "stand & carry", "pile driving", "scissoring", "facial",
     "in mouth", "on body", "creampie", "foot play",
 )  # fmt: skip
+# Acts the model still scores (ACTS follows its outputs) but the plugin leaves
+# out: too unreliable to count toward a start or show on the timeline.
+DROPPED = ("rimming",)
 FOREPLAY = ("kissing", "striptease / tease", "massage / oil", "breast worship", "ass worship",
             "masturbation / toys")  # fmt: skip
 POSITIONS = ("cowgirl", "missionary", "doggy style", "prone bone", "side/spoon", "ballerina",
              "stand & carry", "pile driving", "scissoring")  # fmt: skip
-LATER = ("oral on him", "oral on her", "69", "rimming", "handjob", "fingering", "titjob",
+LATER = ("oral on him", "oral on her", "69", "handjob", "fingering", "titjob",
          *POSITIONS, "facial", "in mouth", "on body", "creampie")  # fmt: skip
 # Where the action counts as started: a frame's score is the chance that it
 # shows any of the stage's acts. The first two are experimental (foreplay is
@@ -117,7 +120,7 @@ def stage_of(settings: dict) -> str:
     text = str(settings.get("startStage") or "").strip().lower()
     if text.startswith("acts:"):
         names = {name.strip() for name in text[5:].split(",")}
-        picked = tuple(act for act in ACTS[1:] if act in names)
+        picked = tuple(act for act in ACTS[1:] if act in names and act not in DROPPED)
         if not picked:
             return DEFAULT_STAGE
         same = next((key for key, acts in STAGES.items() if set(acts) == set(picked)), None)
@@ -135,7 +138,7 @@ def size_of(settings: dict) -> str:
 def model_id(size: str, stage: str) -> str:
     """Part of every cached result: another model, stage or rule recomputes
     older results."""
-    return f"{MODELS[size]['id']}/{stage}+t80p10"
+    return f"{MODELS[size]['id']}/{stage}+t80p10d1"  # d1: rimming dropped
 
 
 def chosen_size() -> str:
@@ -1302,7 +1305,7 @@ def act_hits(acts: dict, duration: float, rule: dict = TIMELINE) -> dict[str, tu
     times = sorted(t for t, a in acts.items() if a is not None)
     out = {}
     for j, act in enumerate(ACTS):
-        if j == 0:
+        if j == 0 or act in DROPPED:
             continue  # "nothing yet" has no start
         before = None
         for t in times:
@@ -1837,6 +1840,10 @@ def timeline_view(args: dict, server: dict) -> dict:
     shown = row if current else None  # another model's frames don't show
     frames = shown["frames"] if shown else []
     firsts = shown["firsts"] if shown and state == "done" else {}
+    # Dropped acts don't show, also on timelines scanned before they were.
+    dropped = [ACTS.index(act) for act in DROPPED]
+    frames = [[t, a if a is None else [0 if j in dropped else v for j, v in enumerate(a)]] for t, a in frames]
+    firsts = {act: t for act, t in firsts.items() if act not in DROPPED}
     if shown and state != "done":  # so far: each act's first frame past the threshold
         acts = {t: None if a is None else [v / 100 for v in a] for t, a in frames}
         firsts = {act: hit for act, (_, hit) in act_hits(acts, shown["duration"]).items()}

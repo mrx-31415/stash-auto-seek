@@ -14,7 +14,7 @@ from test_2_player import open_scene
 
 pytestmark = pytest.mark.model
 
-MODEL_ID = "acts-b32-v1/oral+t80p10"  # the default model and stage
+MODEL_ID = "acts-b32-v1/oral+t80p10d1"  # the default model and stage
 
 
 @pytest.fixture(scope="module")
