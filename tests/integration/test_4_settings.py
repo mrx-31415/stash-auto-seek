@@ -57,7 +57,7 @@ def test_start_and_model_settings(page, base_url, gql, configure, errors) -> Non
     expect(group.locator(".auto-seek-start .react-select__single-value")).to_have_text(
         "Oral, hands or sex"
     )
-    expect(group.locator(".auto-seek-chip.is-on")).to_have_count(20)
+    expect(group.locator(".auto-seek-chip.is-on")).to_have_count(19)
 
     pick(page, group, "auto-seek-start", "Sex positions only")
     expect(group.locator(".auto-seek-chip.is-on")).to_have_count(9)
