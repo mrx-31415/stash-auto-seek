@@ -24,7 +24,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 assert.deepEqual(plain(find("doggy")), ["doggy style"]);
 assert.deepEqual(plain(find("bj")), ["oral on him"]);
 assert.ok(find("cum").includes("creampie") && find("cum").includes("facial"));
-assert.ok(find("oral").includes("oral on her") && find("oral").includes("rimming"));
+assert.ok(find("oral").includes("oral on her") && find("oral").includes("69"));
 assert.equal(find("").length, ACT_GROUPS.flatMap((group) => group.acts).length);
 
 // The patch: only Auto Seek's own panel changes; everything else passes on.

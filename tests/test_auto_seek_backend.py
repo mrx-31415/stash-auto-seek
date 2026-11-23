@@ -871,6 +871,28 @@ def test_timeline_finds_where_each_act_first_shows(backend, monkeypatch):
     assert 1800 / 10 - 20 < len(cut) < 1800 / 10 + 20  # only the new half of the grid
 
 
+def test_dropped_acts_neither_count_nor_show(backend, monkeypatch):
+    # Rimming everywhere: no stage counts it, the timeline finds no start for
+    # it, and the view hides it, also from a timeline saved before the drop.
+    def acts_at(t):
+        acts = [0.01] * len(backend.ACTS)
+        acts[backend.ACTS.index("rimming")] = 0.95
+        return acts
+
+    assert all("rimming" not in acts for acts in backend.STAGES.values())
+    assert backend.stage_of({"startStage": "acts: rimming"}) == "oral"
+    assert backend.stage_score(acts_at(0), "anything") < 0.5
+    fake_scene(backend, monkeypatch, acts_at)
+    row = backend.scan_timeline("1", {})
+    assert "rimming" not in row["firsts"]
+    j = backend.ACTS.index("rimming")
+    old = dict(row, firsts={"rimming": 0.0})
+    monkeypatch.setattr(backend, "load_timeline", lambda scene_id: old)
+    view = backend.timeline_view({"scene_id": "1"}, {})
+    assert view["state"] == "done" and view["firsts"] == {}
+    assert all(a[j] == 0 for _, a in view["frames"] if a is not None)
+
+
 def test_timeline_view_queues_an_unscanned_scene_first(backend, monkeypatch):
     fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
     started = []

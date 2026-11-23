@@ -42,7 +42,8 @@ def page():
 
 def test_the_page_lists_every_act_once(backend, page):
     listed = [act for group in page["groups"] for act in group["acts"]]
-    assert sorted(listed) == sorted(backend.ACTS[1:])  # all but "nothing yet"
+    shown = [act for act in backend.ACTS[1:] if act not in backend.DROPPED]
+    assert sorted(listed) == sorted(shown)  # all but "nothing yet" and the dropped
     assert len(listed) == len(set(listed))
 
 
