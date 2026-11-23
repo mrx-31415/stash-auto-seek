@@ -64,8 +64,10 @@ WORKER_LOCK_PATH = os.path.join(DATA_DIR, "worker.lock")
 # frame shows, int8 weights, raw RGB bytes in. Two sizes: ViT-B/32 is quicker,
 # ViT-B/16 looks at four times the patches and finds starts more accurately
 # (v2: trained on more hand-checked frames, one layer kept in float because int8
-# distorted its act scores). Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
-HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/d141ef3e5acbbab1774932bb2caac33037cddeb9/"
+# distorted its act scores; v3: also told apart whose hand, and comes with a
+# timeline head that reads each frame together with the frames 10 s either
+# side). Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
+HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/cabf455b86e1766a55c763fc4edd6d8c068ecf4f/"
 MODELS = {
     "fast": {
         "path": "models/auto-seek-acts-b32-v1.onnx",
@@ -75,13 +77,23 @@ MODELS = {
         "id": "acts-b32-v1",
     },
     "accurate": {
-        "path": "models/auto-seek-acts-b16-v2.onnx",
-        "url": HF + "auto-seek-acts-b16-v2.onnx",
-        "sha256": "f6997abf65ae54a89d16f2b1cad2d22e4349849fd983488bd1751f28ef263d9d",
-        "size": 103118723,
-        "id": "acts-b16-v2",
+        "path": "models/auto-seek-acts-b16-v3.onnx",
+        "url": HF + "auto-seek-acts-b16-v3.onnx",
+        "sha256": "9c835a21a6be3476e9f749248a2c7ffef54ab21ac112c5bbbcee2f6d70a4a3ae",
+        "size": 103118586,
+        "id": "acts-b16-v3",
+        "embedding": 512,
+        "head": {
+            "path": "models/auto-seek-acts-b16-v3-head.onnx",
+            "url": HF + "auto-seek-acts-b16-v3-head.onnx",
+            "sha256": "8fc08204cf5cd8d388382878244303683a1dd099fe364c9bf9ff64baf589d003",
+            "size": 2157796,
+        },
     },
 }
+# The timeline head's neighbours: the frames this far either side (a neighbour
+# outside the scene or blank counts as the frame itself, as in training).
+HEAD_S = 10
 ACTS = (
     "nothing yet", "kissing", "striptease / tease", "massage / oil", "breast worship",
     "ass worship", "masturbation / toys", "oral on him", "oral on her", "69", "rimming",
@@ -272,7 +284,8 @@ def platform_key() -> str | None:
 
 def files_needed() -> tuple[dict, ...]:
     key = platform_key()
-    return (MODEL, RUNTIMES[key]) if key in RUNTIMES else (MODEL,)
+    model = (MODEL, MODEL["head"]) if "head" in MODEL else (MODEL,)
+    return (*model, RUNTIMES[key]) if key in RUNTIMES else model
 
 
 LOCK_STALE_SECONDS = 120
@@ -1175,7 +1188,8 @@ def scorer(threads: int, download: bool = True) -> ort_api.Session:
             raise ValueError(
                 f"Auto Seek can't run on this server ({sys.platform}, {platform.machine()})"
             )
-        if not all(file_ready(entry, verified) for entry in (MODEL, runtime)):
+        needed = (MODEL, runtime, *((MODEL["head"],) if "head" in MODEL else ()))
+        if not all(file_ready(entry, verified) for entry in needed):
             if not download:
                 raise FilesMissing(
                     "The model isn't downloaded: downloads are turned off in Auto Seek's settings"
@@ -1185,8 +1199,20 @@ def scorer(threads: int, download: bool = True) -> ort_api.Session:
         model = model_bytes()
         read = time.monotonic()
         _scorer.clear()
-        _scorer[key] = ort_api.Session(target_of(runtime), model, threads, len(ACTS))
+        _scorer[key] = ort_api.Session(
+            target_of(runtime), model, threads, len(ACTS), MODEL.get("embedding", 0)
+        )
         LOAD_TIMES.update(read=read - started, session=time.monotonic() - read)
+    return _scorer[key]
+
+
+def head_scorer() -> ort_api.Head:
+    """The chosen model's timeline head (call after scorer(): same files)."""
+    key = ("head", MODEL["head"]["path"])
+    if key not in _scorer:
+        runtime = RUNTIMES[platform_key() or ""]
+        with open(target_of(MODEL["head"]), "rb") as source:
+            _scorer[key] = ort_api.Head(target_of(runtime), source.read(), 1, len(ACTS))
     return _scorer[key]
 
 
@@ -1229,13 +1255,19 @@ class Frames:
     """Cuts frames of one scene and scores every act on them, each frame
     once; `acts[t]` is the scores (None for a blank grab)."""
 
-    def __init__(self, session, ffmpeg: str, path: str, duration: float):
+    def __init__(self, session, ffmpeg: str, path: str, duration: float, embed: bool = False):
         self.session, self.ffmpeg, self.path, self.duration = session, ffmpeg, path, duration
         self.acts: dict[float, list[float] | None] = {}
+        # With `embed`, each frame's embedding too (for the timeline head).
+        self.embed, self.emb = embed, {}
         self.timings = {"cut": 0.0, "score": 0.0}
 
-    def score(self, times) -> None:
-        times = sorted({round(t, 2) for t in times} - set(self.acts))
+    def score(self, times, again: bool = False) -> None:
+        """Score frames not scored yet; `again`: those whose embedding is
+        missing too (scored before a paused scan stopped), keeping the
+        scores already there."""
+        done = set(self.emb) if again else set(self.acts)
+        times = sorted({round(t, 2) for t in times} - done)
         if not times:
             return
         t0 = time.monotonic()
@@ -1249,10 +1281,17 @@ class Frames:
         t1 = time.monotonic()
         d = self.duration
         for t, pixels in zip(times, grabs, strict=True):
-            acts = None
+            acts = emb = None
             if pixels is not None and not blank(pixels):
-                acts = list(self.session.score(pixels, [t / d, t / 60, d / 3600])[1])
-            self.acts[t] = acts
+                features = [t / d, t / 60, d / 3600]
+                if self.embed:
+                    _, acts, emb = self.session.score_embedding(pixels, features)
+                else:
+                    acts = list(self.session.score(pixels, features)[1])
+            if self.embed:
+                self.emb[t] = emb
+            if not (again and t in self.acts):
+                self.acts[t] = acts
         self.timings["cut"] += t1 - t0
         self.timings["score"] += time.monotonic() - t1
 
@@ -1284,8 +1323,16 @@ def timeline_on(settings: dict) -> bool:
     return settings.get("disableTimeline") is not True
 
 
+def head_on(size: str, spacing: float) -> bool:
+    """Whether the timeline uses the model's head: it needs the frames HEAD_S
+    either side, which only a spacing that divides HEAD_S puts on the grid."""
+    steps = HEAD_S / spacing
+    return "head" in MODELS[size] and abs(steps - round(steps)) < 1e-9
+
+
 def timeline_id(size: str, spacing: float) -> str:
-    return f"{MODELS[size]['id']}/x{spacing:g}+t80p10"
+    head = "+nb" if head_on(size, spacing) else ""
+    return f"{MODELS[size]['id']}{head}/x{spacing:g}+t80p10"
 
 
 def timeline_grid(duration: float, spacing: float) -> list[float]:
@@ -1399,21 +1446,60 @@ def scan_timeline(scene_id: str, server: dict, yields: bool = False) -> dict:
         return row
     session = scorer(threads_setting(settings), settings.get("disableDownload") is not True)
     ffmpeg = find_ffmpeg((config.get("general") or {}).get("ffmpegPath") or "", server)
-    frames = Frames(session, ffmpeg, path, duration)
-    frames.acts.update(stored_acts(row, model))
+    head = head_on(size, spacing)
+    frames = Frames(session, ffmpeg, path, duration, embed=head)
+    stored = stored_acts(row, model)
+    frames.acts.update(stored)
     pair = TIMELINE["pair_s"]
+    grid = timeline_grid(duration, spacing)
+    on_grid = set(grid)
+    # With the head, a grid frame's scores are the head's (it and the frames
+    # HEAD_S either side); frames between grid points (narrowing a start
+    # down) keep the model's own. A grid frame is saved once the head has
+    # scored it, so a paused scan's saved grid frames are the head's.
+    headed = {t: a for t, a in stored.items() if t in on_grid} if head else {}
+
+    def shown() -> dict:
+        if not head:
+            return frames.acts
+        return {
+            t: headed[t] if t in on_grid else a
+            for t, a in frames.acts.items()
+            if t in headed or t not in on_grid
+        }
+
+    def score_head(times: list[float]) -> None:
+        todo = [t for t in times if t not in headed]
+        last = duration - 1
+        around = {round(u, 2) for t in todo for u in (t - HEAD_S, t, t + HEAD_S) if 0 <= u <= last}
+        frames.score(around)
+        frames.score(around, again=True)  # embeddings a paused scan didn't keep
+        rows = []
+        for t in todo:
+            centre = frames.emb.get(t)
+            if centre is None:
+                headed[t] = None  # blank
+                continue
+            sides = [frames.emb.get(round(t + d, 2)) for d in (-HEAD_S, HEAD_S)]
+            sides = [centre if side is None else side for side in sides]
+            mean = [(a + b + c) / 3 for a, b, c in zip(sides[0], centre, sides[1], strict=True)]
+            rows.append((t, centre + mean))
+        for (t, _), acts in zip(rows, head_scorer().scores([x for _, x in rows]), strict=True):
+            headed[t] = acts
+
     try:
-        grid = timeline_grid(duration, spacing)
         for i in range(0, len(grid), TIMELINE_BATCH):
             batch = grid[i : i + TIMELINE_BATCH]
             frames.score([*batch, *(partner_of(t, duration, pair) for t in batch)])
-            save_timeline(scene_id, model, duration, frames.acts, {}, 0)
+            if head:
+                score_head(batch)
+            save_timeline(scene_id, model, duration, shown(), {}, 0)
             if yields and page_waiting(scene_id):
-                save_timeline(scene_id, model, duration, frames.acts, {}, 3)
+                save_timeline(scene_id, model, duration, shown(), {}, 3)
                 raise Paused(scene_id)
         # Narrow each act's first hit down to a few seconds: one middle frame
         # per act and round, all acts' frames cut together.
-        spans = {act: list(span) for act, span in act_hits(frames.acts, duration).items()}
+        spans = {act: list(span) for act, span in act_hits(shown(), duration).items()}
         while True:
             open_spans = {
                 act: span
@@ -1435,11 +1521,11 @@ def scan_timeline(scene_id: str, server: dict, yields: bool = False) -> dict:
                 score = a[j_of[act]] if later is None else min(a[j_of[act]], later[j_of[act]])
                 spans[act][1 if score >= TIMELINE["threshold"] else 0] = t
         firsts = {act: span[1] for act, span in sorted(spans.items(), key=lambda kv: kv[1][1])}
-        save_timeline(scene_id, model, duration, frames.acts, firsts, 1)
+        save_timeline(scene_id, model, duration, shown(), firsts, 1)
     except (FilesMissing, Paused):
         raise
     except Exception as error:
-        save_timeline(scene_id, model, duration, frames.acts, {}, 2, str(error)[:500])
+        save_timeline(scene_id, model, duration, shown(), {}, 2, str(error)[:500])
         raise
     return load_timeline(scene_id) or {}
 
@@ -1522,8 +1608,10 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     )
     with contextlib.closing(cache()) as connection, connection:
         connection.execute("DELETE FROM failure WHERE scene_id = ?", (scene_id,))
-    # The frames the search scored start the scene's timeline off.
-    if timeline_on(settings):
+    # The frames the search scored start the scene's timeline off (not a
+    # timeline the head scores: its grid frames must be the head's).
+    size, spacing = size_of(settings), timeline_spacing(settings)
+    if timeline_on(settings) and not head_on(size, spacing):
         with contextlib.suppress(sqlite3.Error, OSError):
             model = timeline_id(size_of(settings), timeline_spacing(settings))
             row = load_timeline(scene_id)

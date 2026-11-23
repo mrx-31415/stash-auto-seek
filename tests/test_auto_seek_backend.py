@@ -814,6 +814,10 @@ def fake_scene(backend, monkeypatch, acts_at, duration=1800, settings=None):
         def score(self, pixels, features):
             return 0.5, acts_at(round(features[0] * duration, 2))
 
+        def score_embedding(self, pixels, features):
+            t = round(features[0] * duration, 2)  # the embedding says when it was cut
+            return 0.5, acts_at(t), [t] + [0.0] * 511
+
     settings = {} if settings is None else settings
     monkeypatch.setattr(
         backend,
@@ -869,6 +873,52 @@ def test_timeline_finds_where_each_act_first_shows(backend, monkeypatch):
     settings["timelineSpacing"] = 5
     assert backend.scan_timeline("1", {})["model"].endswith("/x5+t80p10")
     assert 1800 / 10 - 20 < len(cut) < 1800 / 10 + 20  # only the new half of the grid
+
+
+def test_timeline_head_scores_the_grid(backend, monkeypatch):
+    # The model alone sees kissing from 100 s; the head (reading a frame with
+    # the ones 10 s either side) only once their mean time is 300 s. The head
+    # picks the grid step, the model's own scores narrow the start inside it.
+    kiss = backend.ACTS.index("kissing")
+
+    def acts_at(t):
+        acts = [0.01] * len(backend.ACTS)
+        acts[kiss] = 0.95 if t >= 100 else 0.01
+        return acts
+
+    class Head:
+        def scores(self, rows):
+            out = []
+            for row in rows:
+                acts = [0.01] * len(backend.ACTS)
+                acts[kiss] = 0.95 if row[512] >= 300 else 0.01  # the mean's time
+                out.append(acts)
+            return out
+
+    cut, settings = fake_scene(backend, monkeypatch, acts_at, settings={"accurateModel": True})
+    monkeypatch.setattr(backend, "head_scorer", lambda: Head())
+    backend.analyse_scene("1", {})  # the start search's frames must not seed the grid
+    cut.clear()
+    row = backend.scan_timeline("1", {})
+    assert "+nb/x10" in row["model"]
+    assert 290 < row["firsts"]["kissing"] <= 300
+    shown = dict((t, a) for t, a in row["frames"])
+    assert shown[200][kiss] == 1 and shown[300][kiss] == 95  # the head's, in percent
+    assert len(cut) < 1800 / 10 + 20  # the head reads the grid: no extra frames
+    # A paused scan resumes with the head's saved frames and finds the same.
+    whole = row["firsts"]
+    backend.save_timeline("1", row["model"], 1800, {}, {}, 0)
+    calls = iter([False] * 10 + [True] + [False] * 1000)
+    monkeypatch.setattr(backend, "page_waiting", lambda scene_id: next(calls))
+    with pytest.raises(backend.Paused):
+        backend.scan_timeline("1", {}, yields=True)
+    cut.clear()
+    assert backend.scan_timeline("1", {})["firsts"] == whole
+    assert len(cut) < 1800 / 10 - 40 + 10  # the rest, and the frames either side again
+    # A spacing that doesn't divide 10 s: the model's own scores.
+    settings["timelineSpacing"] = 15
+    row = backend.scan_timeline("1", {})
+    assert "+nb" not in row["model"] and row["firsts"]["kissing"] <= 100
 
 
 def test_dropped_acts_neither_count_nor_show(backend, monkeypatch):

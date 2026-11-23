@@ -42,9 +42,13 @@ _P = ctypes.c_void_p
 
 class Session:
     """A model taking ``pixels`` (uint8, N x 224 x 224 x 3 RGB) and ``q`` (float,
-    N x 3 position features), returning ``started`` (N) and ``acts`` (N x A)."""
+    N x 3 position features), returning ``started`` (N) and ``acts`` (N x A),
+    and, from models made for the timeline head, ``emb`` (N x E): the frame's
+    embedding the head reads."""
 
-    def __init__(self, library: str, model: bytes, threads: int = 1, acts: int = 10):
+    def __init__(
+        self, library: str, model: bytes, threads: int = 1, acts: int = 10, embedding: int = 0
+    ):
         self._lib = ctypes.CDLL(library)
         self._lib.OrtGetApiBase.restype = _P
         base = ctypes.cast(self._lib.OrtGetApiBase(), ctypes.POINTER(_P))
@@ -52,7 +56,7 @@ class Session:
         if not api:
             raise RuntimeError("The ONNX Runtime library is older than 1.17")
         self._table = ctypes.cast(api, ctypes.POINTER(_P))
-        self._acts = acts
+        self._acts, self._embedding = acts, embedding
         self._message = self._fn(GET_ERROR_MESSAGE, ctypes.c_char_p, _P)
         self._release_status = self._fn(RELEASE_STATUS, None, _P)
         self._release_value = self._fn(RELEASE_VALUE, None, _P)
@@ -121,6 +125,18 @@ class Session:
 
     def score(self, pixels: bytes, features: list[float]) -> tuple[float, list[float]]:
         """One frame: the chance the action has started, and the act shares."""
+        started, acts, _ = self._frame(pixels, features, False)
+        return started, acts
+
+    def score_embedding(
+        self, pixels: bytes, features: list[float]
+    ) -> tuple[float, list[float], list[float]]:
+        """As score(), plus the frame's embedding (a model with ``emb`` only)."""
+        if not self._embedding:
+            raise ValueError("this model has no embedding output")
+        return self._frame(pixels, features, True)
+
+    def _frame(self, pixels: bytes, features: list[float], embedding: bool):
         if len(pixels) != FRAME_BYTES:
             raise ValueError("a frame must be 224 x 224 RGB")
         image = (ctypes.c_uint8 * FRAME_BYTES).from_buffer_copy(pixels)
@@ -129,17 +145,19 @@ class Session:
             self._value(image, (1, FRAME_SIZE, FRAME_SIZE, 3), TENSOR_UINT8),
             self._value(position, (1, 3), TENSOR_FLOAT),
         )
-        outputs = (_P * 2)()
+        names = [b"started", b"acts", b"emb"] if embedding else [b"started", b"acts"]
+        outputs = (_P * len(names))()
         try:
             self._check(
                 self._run(
                     self._session, None,
                     (ctypes.c_char_p * 2)(b"pixels", b"q"), inputs, 2,
-                    (ctypes.c_char_p * 2)(b"started", b"acts"), 2, outputs,
+                    (ctypes.c_char_p * len(names))(*names), len(names), outputs,
                 )
             )  # fmt: skip
             started = self._floats(outputs[0], 1)[0]
-            return started, self._floats(outputs[1], self._acts)
+            acts = self._floats(outputs[1], self._acts)
+            return started, acts, self._floats(outputs[2], self._embedding) if embedding else None
         finally:
             for value in (*inputs, *outputs):
                 if value:
@@ -150,3 +168,29 @@ class Session:
         self._check(self._data(value, ctypes.byref(pointer)))
         array = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_float))
         return [float(array[i]) for i in range(count)]
+
+
+class Head(Session):
+    """The timeline head: ``x`` (float, N x W: a frame's embedding and the mean
+    of it and its neighbours') in, ``acts`` (N x A) out."""
+
+    def scores(self, rows: list[list[float]]) -> list[list[float]]:
+        if not rows:
+            return []
+        width = len(rows[0])
+        data = (ctypes.c_float * (len(rows) * width))(*(v for row in rows for v in row))
+        inputs = (_P * 1)(self._value(data, (len(rows), width), TENSOR_FLOAT))
+        outputs = (_P * 1)()
+        try:
+            self._check(
+                self._run(
+                    self._session, None, (ctypes.c_char_p * 1)(b"x"), inputs, 1,
+                    (ctypes.c_char_p * 1)(b"acts"), 1, outputs,
+                )
+            )  # fmt: skip
+            flat = self._floats(outputs[0], len(rows) * self._acts)
+            return [flat[i * self._acts : (i + 1) * self._acts] for i in range(len(rows))]
+        finally:
+            for value in (*inputs, *outputs):
+                if value:
+                    self._release_value(value)
