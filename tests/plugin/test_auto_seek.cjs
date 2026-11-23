@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, "../../auto-seek/auto-seek.j
 const context = { Math, String, Number, parseFloat };
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf("  // ── pure helpers"), source.indexOf("  // ── end pure helpers")), context);
-const { formatTime, parseVtt, spriteCue, timelineRows, actStops, nextStop, heatColor, lockSteps, chapters, actColour, spanText, hitRuns, zoomWindow, rulerSteps } = context;
+const { formatTime, parseVtt, spriteCue, timelineRows, actStretches, actStops, nextStop, heatColor, lockSteps, chapters, actColour, spanText, hitRuns, zoomWindow, rulerSteps } = context;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // Times on the toasts and the pill: m:ss, with hours when needed.
@@ -36,20 +36,34 @@ assert.equal(spriteCue(cues, 5).x, 0);
   assert.deepEqual(plain(rows[1].points), [[0, 0], [20, 0.05], [60, 0.95]]); // time order, blank frames skipped
 }
 
-// An act name's stops: one per stretch at or above the floor (a one-frame
-// dip doesn't split a stretch), at its peak, except where the act clearly
-// starts; stepping goes on from the playhead and wraps round to the first.
+// Where an act clearly is: a stretch starts at the threshold and lasts while
+// the score stays at or above the floor; same-act stretches under a minute
+// apart join, and ones shorter than 30 s are dropped.
 {
-  const points = [[0, 0.1], [10, 0.6], [20, 0.9], [30, 0.4], [40, 0.7], [50, 0.2], [60, 0.1], [70, 0.8], [80, 0.95], [90, 0.3]];
-  assert.deepEqual(plain(actStops(points)), [20, 80]); // 30 s dips for one frame only
-  assert.deepEqual(plain(actStops(points, 8)), [8, 80]); // the start stands for its stretch
-  assert.deepEqual(plain(actStops(points, 65)), [20, 65]); // just before the second stretch
-  assert.deepEqual(plain(actStops([[0, 0.9], [10, 0.1], [20, 0.1], [30, 0.6]])), [0, 30]);
-  // With a threshold, a stretch that never reaches it (a grey bar on the
-  // lane) isn't a stop, unless no stretch reaches it at all.
-  const maybes = [[0, 0.9], [10, 0.1], [20, 0.1], [30, 0.66], [40, 0.1], [50, 0.1], [60, 0.85]];
-  assert.deepEqual(plain(actStops(maybes, 0, 0.5, 0.8)), [0, 60]);
-  assert.deepEqual(plain(actStops([[0, 0.6], [10, 0.1], [20, 0.1], [30, 0.7]], null, 0.5, 0.8)), [0, 30]);
+  const wobbly = [[0, 0.85], [10, 0.6], [20, 0.9], [30, 0.55], [40, 0.82], [50, 0.3]];
+  assert.deepEqual(plain(actStretches(wobbly)), [{ from: 0, to: 50, peak: [20, 0.9] }]);
+  const cut = (gap) => [[0, 0.9], [10, 0.9], [20, 0.9], ...Array.from({ length: gap / 10 }, (_, k) => [30 + 10 * k, 0.1]), [30 + gap, 0.9], [40 + gap, 0.9], [50 + gap, 0.95]];
+  assert.deepEqual(plain(actStretches(cut(50)).map((s) => [s.from, s.to])), [[0, 110]]); // a cut-away
+  assert.deepEqual(plain(actStretches(cut(100)).map((s) => [s.from, s.to])), [[0, 30], [130, 160]]);
+  assert.deepEqual(plain(actStretches([[0, 0.1], [10, 0.95], [20, 0.1]])), []); // one sure frame alone
+  assert.deepEqual(plain(actStretches([[0, 0.7], [10, 0.7], [20, 0.7], [30, 0.7]])), []); // never reaches the line
+  assert.deepEqual(plain(actStretches([[0, 0.9], [10, 0.9], [20, 0.9], [200, 0.6]]).map((s) => [s.from, s.to])), [[0, 30]]); // frames not scanned yet don't extend it
+  // A short scene scales both down: in 40 s, two sure frames 15 s apart stay two.
+  const short = [[0, 0.1], [5, 0.6], [10, 0.95], [15, 0.3], [20, 0.1], [25, 0.1], [30, 0.85], [35, 0.4]];
+  assert.deepEqual(plain(actStretches(short, 0.8, 0.5, 5, 40).map((s) => [s.from, s.to])), [[10, 15], [30, 35]]);
+}
+
+// An act name's stops: one per stretch, at its peak, except where the act
+// clearly starts; an act never that sure steps through its likely stretches;
+// stepping goes on from the playhead and wraps round to the first.
+{
+  const points = Array.from({ length: 25 }, (_, k) => [10 * k, 0.1]);
+  [[0, 0.6], [10, 0.9], [20, 0.85], [30, 0.7], [200, 0.85], [210, 0.9], [220, 0.95], [230, 0.6]].forEach(([time, score]) => (points[time / 10][1] = score));
+  assert.deepEqual(plain(actStops(points, null, 0.5, 0.8)), [10, 220]);
+  assert.deepEqual(plain(actStops(points, 5, 0.5, 0.8)), [5, 220]); // the start stands for its stretch
+  assert.deepEqual(plain(actStops(points, 150, 0.5, 0.8)), [10, 150]); // just before the second stretch
+  assert.deepEqual(plain(actStops(points)), [10, 220]);
+  assert.deepEqual(plain(actStops([[0, 0.6], [10, 0.7], [20, 0.1], [30, 0.1]], null, 0.5, 0.8)), [10]); // unsure: likely stretches
   assert.deepEqual(plain(actStops([], 12)), [12]);
   assert.deepEqual(plain(actStops([])), []);
   assert.deepEqual(plain(nextStop([8, 80], 0)), { time: 8, index: 0, wrapped: false });
@@ -73,14 +87,19 @@ assert.equal(heatColor(2, 0.7), "rgb(255, 241, 194)");
   assert.deepEqual(plain(lockSteps([[0, 0.9]], 0, 0.7)), []); // nothing before the start to close in from
 }
 
-// Chapters: the surest act at or above the threshold, runs joined; frames
-// with no clear act leave a gap.
+// The top-act strip: the act whose stretch covers a frame, kept while it
+// lasts; another takes over only after leading for 30 s, from where its lead
+// began, so a one-frame lead doesn't flicker. Frames with no act leave a gap.
 {
   const acts = ["nothing yet", "kissing", "oral on him"];
-  const frames = [[20, [10, 90, 50]], [0, [90, 10, 0]], [10, [10, 85, 0]], [30, [10, 70, 95]], [40, [10, 10, 90]], [50, null], [60, [90, 0, 0]]];
+  const kissing = [90, 90, 90, 90, 90, 90, 60, 60, 60, 0, 0, 0, 0];
+  const oral = [0, 0, 95, 0, 85, 85, 95, 95, 95, 95, 95, 95, 95];
+  const frames = kissing.map((score, k) => [10 * k, [10, score, oral[k]]]).reverse();
+  frames.push([130, null], [140, [90, 0, 0]], [150, [90, 0, 0]], [160, [90, 0, 0]], [170, [90, 0, 0]], [180, [10, 95, 0]], [190, [10, 95, 0]], [200, [10, 95, 0]]);
   assert.deepEqual(plain(chapters(frames, acts, 0.8, 10)), [
-    { act: "kissing", from: 10, to: 30 },
-    { act: "oral on him", from: 30, to: 60 },
+    { act: "kissing", from: 0, to: 60 },
+    { act: "oral on him", from: 60, to: 140 },
+    { act: "kissing", from: 180, to: 210 },
   ]);
 }
 
@@ -94,11 +113,11 @@ assert.equal(spanText(40), "40 s");
 assert.equal(spanText(14 * 60 + 5), "14 m");
 assert.equal(spanText(2 * 3600 + 14 * 60), "2 h 14 m");
 
-// Where an act clearly is, for the lanes' overview: runs past the line, a
-// one-frame dip inside one.
+// The lanes' overview blocks are the act's stretches.
 {
   const points = [[0, 0.9], [10, 0.85], [20, 0.5], [30, 0.95], [40, 0.2], [50, 0.1], [60, 0.81], [70, 0.3]];
-  assert.deepEqual(plain(hitRuns(points, 0.8, 10)), [[0, 40], [60, 70]]);
+  assert.deepEqual(plain(hitRuns(points, 0.8, 10)), [[0, 70]]);
+  assert.deepEqual(plain(hitRuns([[0, 0.9], [10, 0.9], [20, 0.9], [200, 0.9]], 0.8, 10)), [[0, 30]]);
   assert.deepEqual(plain(hitRuns([[0, 0.5]], 0.8, 10)), []);
 }
 

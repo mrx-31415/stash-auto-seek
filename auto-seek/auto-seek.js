@@ -173,35 +173,53 @@
     return rows.sort((a, b) => (a.first ?? Infinity) - (b.first ?? Infinity) || b.peak - a.peak);
   }
 
-  // Where tapping an act's name steps to. Its points ([time, score], in
-  // time order) fall into stretches at or above `floor` (a single frame
-  // dipping below doesn't end one); each stretch is one stop, at its peak,
-  // except the stretch where the act clearly starts (`first`), which stops
-  // there. When some stretch reaches `threshold` (where the lane colours a
-  // hit), only those count, so every stop is one you can see on the lane.
-  // Sorted, in seconds.
-  function actStops(points, first = null, floor = 0.5, threshold = null) {
-    const stretches = [];
+  // Where an act clearly is: stretches of frames ([time, score], in time
+  // order) that reach `enter` and carry on while the score stays at or above
+  // `stay`, so a score wobbling round the line doesn't split one. Stretches
+  // of the same act up to a minute apart are joined (a cut-away doesn't end
+  // an act), and those under 30 s are dropped (one sure frame alone isn't a
+  // stretch), or none when `brief`. A scene under 10 minutes `duration`
+  // scales both down. Each is {from, to, peak}, `to` being the end of its
+  // last frame, in seconds.
+  function actStretches(points, enter = 0.8, stay = 0.5, spacing = 10, duration = Infinity, brief = false) {
+    const bridge = Math.min(60, duration / 10);
+    const least = brief ? 0 : Math.min(30, duration / 20);
+    const found = [];
     let open = null;
-    let below = 0;
     for (const [time, score] of points) {
-      if (score >= floor) {
-        if (!open) open = { end: time, peak: [time, score] };
-        open.end = time;
+      if (open && score >= stay && time <= open.to + spacing / 2) {
+        open.to = time + spacing;
         if (score > open.peak[1]) open.peak = [time, score];
-        below = 0;
-      } else if (open && ++below > 1) {
-        stretches.push(open);
-        open = null;
+        continue;
+      }
+      open = null;
+      if (score < enter) continue;
+      const last = found[found.length - 1];
+      if (last && time - last.to <= bridge) {
+        open = last;
+        open.to = time + spacing;
+        if (score > open.peak[1]) open.peak = [time, score];
+      } else {
+        found.push((open = { from: time, to: time + spacing, peak: [time, score] }));
       }
     }
-    if (open) stretches.push(open);
-    if (threshold != null && stretches.some((stretch) => stretch.peak[1] >= threshold)) {
-      stretches.splice(0, Infinity, ...stretches.filter((stretch) => stretch.peak[1] >= threshold));
-    }
+    return found.filter((stretch) => stretch.to - stretch.from >= least);
+  }
+
+  // Where tapping an act's name steps to: one stop per stretch where the
+  // act clearly is (see actStretches; it reaches `threshold`, the lane's
+  // hit colour), at its peak, except the stretch where the act clearly
+  // starts (`first`), which stops there. An act with only brief sure
+  // moments steps through those, and one never that sure through its
+  // stretches at or above `floor`. Sorted, in seconds.
+  function actStops(points, first = null, floor = 0.5, threshold = null, spacing = 10, duration = Infinity) {
+    const sure = threshold ?? floor;
+    let stretches = actStretches(points, sure, floor, spacing, duration);
+    if (!stretches.length) stretches = actStretches(points, sure, floor, spacing, duration, true);
+    if (!stretches.length) stretches = actStretches(points, floor, floor, spacing, duration, true);
     const stops = stretches.map((stretch) => stretch.peak[0]);
     if (first != null) {
-      const holds = stretches.findIndex((stretch) => stretch.end >= first);
+      const holds = stretches.findIndex((stretch) => stretch.to - spacing >= first);
       if (holds >= 0 && stretches[holds].peak[0] >= first - 15) stops[holds] = first;
       else stops.push(first);
     }
@@ -254,21 +272,50 @@
     return steps;
   }
 
-  // The top-act strip (not chapters yet: it follows every switch): at each frame the act the model is surest of (at
-  // or above the threshold), with runs of the same act joined.
-  function chapters(frames, acts, threshold = 0.8, spacing = 10) {
+  // The top-act strip (not chapters yet): which act is on at each frame,
+  // among those whose stretch (actStretches) covers it. It keeps the act it
+  // shows while that act's stretch lasts, and switches to another only once
+  // that one has been surer for 30 s (less in a short scene), from where its
+  // lead began, so two acts at once don't make it flicker. Frames no
+  // stretch covers leave a gap.
+  function chapters(frames, acts, threshold = 0.8, spacing = 10, duration = Infinity, stay = 0.5) {
     const sorted = frames.filter(([, scores]) => scores).sort((a, b) => a[0] - b[0]);
+    const cover = acts.map((name, j) => (j === 0 ? [] : actStretches(sorted.map(([time, scores]) => [time, (scores[j] ?? 0) / 100]), threshold, stay, spacing, duration)));
+    const covers = (j, time) => cover[j].some((stretch) => time >= stretch.from && time < stretch.to);
+    const need = Math.max(1, Math.round(Math.min(30, duration / 20) / spacing));
     const out = [];
+    let current = -1;
+    let rival = -1;
+    let since = 0;
+    let lead = 0;
     sorted.forEach(([time, scores], k) => {
       let best = -1;
       scores.forEach((percent, j) => {
-        if (j > 0 && percent >= 100 * threshold && (best < 0 || percent > scores[best])) best = j;
+        if (j > 0 && covers(j, time) && (best < 0 || percent > scores[best])) best = j;
       });
-      if (best < 0) return;
+      if (best < 0) {
+        current = rival = -1;
+        return;
+      }
+      let from = time;
+      if (current < 0 || !covers(current, time)) {
+        current = best;
+        rival = -1;
+      } else if (best !== current) {
+        if (best !== rival) [rival, since, lead] = [best, time, 0];
+        if (++lead >= need) {
+          [current, rival, from] = [best, -1, since];
+          const last = out[out.length - 1];
+          if (last) last.to = Math.min(last.to, from);
+          if (last && last.to <= last.from) out.pop();
+        }
+      } else {
+        rival = -1;
+      }
       const end = k + 1 < sorted.length ? sorted[k + 1][0] : time + spacing;
       const last = out[out.length - 1];
-      if (last && last.act === acts[best] && last.to >= time) last.to = end;
-      else out.push({ act: acts[best], from: time, to: end });
+      if (last && last.act === acts[current] && last.to >= from) last.to = end;
+      else out.push({ act: acts[current], from, to: end });
     });
     return out;
   }
@@ -292,23 +339,9 @@
     return h ? `${h} h ${m} m` : `${m} m`;
   }
 
-  // Where an act clearly is: runs of frames ([time, score], in time order)
-  // at or above `threshold`, a single frame below not ending one, each
-  // [from, to) in seconds, to the end of its last frame.
-  function hitRuns(points, threshold = 0.8, spacing = 10) {
-    const runs = [];
-    let open = null;
-    let below = 0;
-    for (const [time, score] of points) {
-      if (score >= threshold) {
-        if (!open) runs.push((open = [time, time + spacing]));
-        open[1] = time + spacing;
-        below = 0;
-      } else if (open && ++below > 1) {
-        open = null;
-      }
-    }
-    return runs;
+  // The lanes' overview blocks: actStretches as [from, to) pairs.
+  function hitRuns(points, threshold = 0.8, spacing = 10, duration = Infinity, stay = 0.5) {
+    return actStretches(points, threshold, stay, spacing, duration).map((stretch) => [stretch.from, stretch.to]);
   }
 
   // The part of the scene the lanes show, [from, to): at least `least`
@@ -1466,7 +1499,7 @@
     const duration = view.timelineDuration;
     if (!box || !(duration > 0)) return;
     const answer = view.timelineAnswer || view.tl || {};
-    const segments = chapters(frames, view.timelineActs || [], answer.threshold ?? 0.8, answer.spacing || 10);
+    const segments = chapters(frames, view.timelineActs || [], answer.threshold ?? 0.8, answer.spacing || 10, duration);
     box.innerHTML = segments.map(({ act, from, to }) => {
       const width = (100 * (Math.min(to, duration) - from)) / duration;
       return `<button type="button" class="auto-seek-tl-chapter" data-act="${act}" data-from="${from}" data-to="${to}" ` +
@@ -1491,7 +1524,7 @@
     const points = (view.timelineFrames || []).filter(([time]) => time <= limit).map(([time, scores]) => [time, scores[j] / 100]);
     const row = view.timeline?.querySelector(`.auto-seek-tl-row[data-act="${CSS.escape(act)}"]`);
     const first = row?.dataset.first ? Number(row.dataset.first) : null;
-    const stops = actStops(points, first, TL_FLOOR, view.timelineThreshold);
+    const stops = actStops(points, first, TL_FLOOR, view.timelineThreshold, view.timelineAnswer?.spacing || view.tl?.spacing || 10, view.timelineDuration || Infinity);
     return stops.length || first == null ? stops : [first];
   }
 
@@ -1637,7 +1670,7 @@
     const j = view.timelineActs?.indexOf(act) ?? -1;
     const spacing = view.timelineAnswer?.spacing || view.tl?.spacing || 10;
     const points = j > 0 ? (view.timelineFrames || []).map(([at, scores]) => [at, scores[j] / 100]) : [];
-    const run = hitRuns(points, view.timelineThreshold ?? 0.8, spacing).find(([from, to]) => time >= from - spacing && time <= to + spacing);
+    const run = hitRuns(points, view.timelineThreshold ?? 0.8, spacing, view.timelineDuration || Infinity).find(([from, to]) => time >= from - spacing && time <= to + spacing);
     if (run) {
       const pad = Math.max(2 * spacing, (run[1] - run[0]) * 0.25);
       animateZoom(view, run[0] - pad, run[1] + pad);
@@ -2098,7 +2131,7 @@
     const curve = points.length
       ? `<path d="M${x(points[0][0])} 10${points.map(([time, score]) => `L${x(time + spacing / 2)} ${(10 - 9.4 * Math.min(score, threshold)).toFixed(2)}`).join("")}L${x(points[points.length - 1][0] + spacing)} 10Z"/>`
       : "";
-    const blocks = hitRuns(points, threshold, spacing)
+    const blocks = hitRuns(points, threshold, spacing, duration)
       .map(([from, to]) => `<rect class="block" x="${x(from)}" y="1" width="${Math.max(1.5, (1000 * (to - from)) / duration).toFixed(1)}" height="8"/>`);
     return `<svg viewBox="0 0 1000 10" preserveAspectRatio="none" aria-hidden="true">` +
       `<g class="auto-seek-tl-bars">${bars.join("")}</g><g class="auto-seek-tl-overview">${curve}${blocks.join("")}</g></svg>`;
@@ -2138,7 +2171,7 @@
       list.innerHTML = CHAPTERS_HTML + rows.map((row) => {
         const sure = row.first != null;
         const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
-        const stops = sure ? actStops(row.points, row.first, TL_FLOOR, answer.threshold ?? 0.8) : [];
+        const stops = sure ? actStops(row.points, row.first, TL_FLOOR, answer.threshold ?? 0.8, answer.spacing || 10, duration) : [];
         return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}` +
           `${stops.length > 1 ? ` data-stops="${stops.join(",")}"` : ""} style="--as-c:${actColour(row.name)}">` +
           nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak, stops.length) +
