@@ -1181,6 +1181,7 @@
     pill.className = "auto-seek-pill";
     pill.innerHTML = '<span class="auto-seek-pill-text">Skip intro</span> <span class="auto-seek-pill-arrow" aria-hidden="true">›</span>';
     video.closest(".video-js").appendChild(pill);
+    clearBar(video);
     const view = { id, video, button, marker, pill, state: "busy", target: null, error: null, promise: null, autoDone: false, ourSeek: false, userSeeked: false, holding: false, needsTap: false, dismissed: false };
     current = view;
     settings().then(({ plugin }) => {
@@ -1348,6 +1349,8 @@
         view.userSeeked = true;
         if (view.video.paused && !view.keepPaused) playVideo(view).catch(() => {});
         followZoom(view, stop.time);
+        glidePlayhead(view, stop.time);
+        lightStretch(view, act, stop.time);
         const where = stops.length > 1 ? ` ${stop.index + 1}/${stops.length}` : "";
         toast(view, `${actLabel(act)}${where} · ${formatTime(stop.time)}${stop.wrapped && stops.length > 1 ? " (back to the first)" : ""}`,
           () => setTime(view, before));
@@ -1356,6 +1359,7 @@
       if (lane && view.timelineDuration) time = laneTime(view, lane, event.clientX);
       if (time == null) return;
       seekPlayer(view, time);
+      glidePlayhead(view, time);
       view.userSeeked = true;
       if (view.video.paused && !view.keepPaused) playVideo(view).catch(() => {});
     });
@@ -1454,6 +1458,38 @@
     showNow(view, time);
   }
 
+  // A tap that moves the video: the playhead glides there instead of
+  // jumping (the video itself jumps at once).
+  function glidePlayhead(view, time) {
+    const head = view.timeline?.querySelector(".auto-seek-tl-playhead");
+    if (!head || reducedMotion()) return;
+    head.classList.add("is-gliding");
+    placeLine(view, head, time);
+    clearTimeout(view.glideTimer);
+    view.glideTimer = setTimeout(() => head.classList.remove("is-gliding"), 260);
+  }
+
+  // The stretch of `act` a step landed on lights up once.
+  function lightStretch(view, act, time) {
+    const row = view.timeline?.querySelector(`.auto-seek-tl-row[data-act="${CSS.escape(act)}"]`);
+    const track = row?.querySelector(".auto-seek-tl-track");
+    const j = view.timelineActs?.indexOf(act) ?? -1;
+    const duration = view.timelineDuration;
+    if (!track || j < 0 || !(duration > 0) || reducedMotion()) return;
+    const spacing = view.timelineAnswer?.spacing || view.tl?.spacing || 10;
+    const limit = view.tl?.cursor ?? Infinity;
+    const points = (view.timelineFrames || []).filter(([at]) => at <= limit).map(([at, scores]) => [at, scores[j] / 100]);
+    const run = hitRuns(points, view.timelineThreshold ?? 0.8, spacing, duration).find(([from, to]) => time >= from - spacing && time < to);
+    const [from, to] = run || [time, time + spacing];
+    track.querySelector(".auto-seek-tl-lit")?.remove();
+    const lit = document.createElement("i");
+    lit.className = "auto-seek-tl-lit";
+    lit.style.left = `${((100 * from) / duration).toFixed(2)}%`;
+    lit.style.width = `${((100 * (Math.min(to, duration) - from)) / duration).toFixed(2)}%`;
+    lit.addEventListener("animationend", () => lit.remove());
+    track.appendChild(lit);
+  }
+
   // What is on screen at `time`: the acts the model is sure of there light up
   // (the surest one named in the header), with the chapter it falls in and
   // how far each act's stops have got.
@@ -1508,7 +1544,117 @@
     }).join("");
     box.hidden = box.previousElementSibling.hidden = !segments.length;
     box.insertAdjacentHTML("beforeend", ZOOM_WINDOW_HTML);
+    paintBar(view, segments);
     placeZoomWindow(view);
+  }
+
+  // ── the seek bar ──
+  // Stash's own seek bar carries the top-act strip: in full colour where the
+  // video has played (a copy inside the played part, so it keeps step with
+  // the player), dimmed ahead of it, and dotted past the scan while one runs.
+  // Hovering it names the act under the pointer.
+  function holderOf(video) {
+    return video.closest(".video-js")?.querySelector(".vjs-progress-holder") || null;
+  }
+
+  function clearBar(video) {
+    const holder = holderOf(video);
+    if (!holder) return;
+    holder.classList.remove("auto-seek-banded", "auto-seek-bar-scanning");
+    holder.querySelectorAll(".auto-seek-bar-acts").forEach((acts) => { acts.autoSeekHtml = ""; acts.innerHTML = ""; });
+  }
+
+  function ensureBar(view) {
+    const holder = holderOf(view.video);
+    if (!holder) return null;
+    const played = holder.querySelector(":scope > .vjs-play-progress");
+    let bar = holder.querySelector(":scope > .auto-seek-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "auto-seek-bar";
+      bar.setAttribute("aria-hidden", "true");
+      bar.innerHTML = '<span class="auto-seek-bar-acts"></span><span class="auto-seek-bar-unscanned"></span><i class="auto-seek-bar-tick"></i><span class="auto-seek-bar-sheen"></span>';
+      // Over the buffered part, under the played one.
+      const loaded = holder.querySelector(":scope > .vjs-load-progress");
+      if (loaded) loaded.after(bar); else holder.prepend(bar);
+    }
+    if (played && !played.querySelector(":scope > .auto-seek-bar-played")) {
+      played.insertAdjacentHTML("afterbegin", '<span class="auto-seek-bar-played" aria-hidden="true"><span class="auto-seek-bar-acts"></span></span>');
+    }
+    if (view.barHolder !== holder) {
+      view.barHolder = holder;
+      view.barResize?.disconnect();
+      view.barResize = new ResizeObserver(() => holder.style.setProperty("--as-bar-w", `${holder.clientWidth}px`));
+      view.barResize.observe(holder);
+      attachBarTip(view, holder);
+    }
+    return bar;
+  }
+
+  function paintBar(view, segments) {
+    if (current !== view) return;
+    const bar = ensureBar(view);
+    const duration = view.timelineDuration;
+    if (!bar || !(duration > 0)) return;
+    const holder = bar.parentElement;
+    const html = segments.map(({ act, from, to }) =>
+      `<i style="left:${((100 * from) / duration).toFixed(2)}%;width:${((100 * (Math.min(to, duration) - from)) / duration).toFixed(2)}%;background:${actColour(act)}"></i>`).join("");
+    holder.querySelectorAll(".auto-seek-bar-acts").forEach((acts) => {
+      if (acts.autoSeekHtml !== html) { acts.autoSeekHtml = html; acts.innerHTML = html; }
+    });
+    holder.classList.toggle("auto-seek-banded", segments.length > 0);
+    view.barSegments = segments;
+  }
+
+  // How far the scan has got, on the seek bar (null: not scanning).
+  function scanBar(view, time) {
+    const holder = view.barHolder;
+    if (!holder?.isConnected || !(view.timelineDuration > 0)) return;
+    holder.classList.toggle("auto-seek-bar-scanning", time != null);
+    if (time != null) holder.style.setProperty("--as-scan", `${Math.min(100, (100 * time) / view.timelineDuration).toFixed(2)}%`);
+  }
+
+  function sheenBar(view) {
+    const holder = view.barHolder;
+    if (!holder?.isConnected || reducedMotion()) return;
+    holder.classList.remove("auto-seek-bar-shine");
+    void holder.offsetWidth; // restart the animation
+    holder.classList.add("auto-seek-bar-shine");
+    setTimeout(() => holder.classList.remove("auto-seek-bar-shine"), 1200);
+  }
+
+  // The act under the pointer, in a tab just above Stash's time tooltip.
+  function attachBarTip(view, holder) {
+    const control = holder.closest(".vjs-progress-control") || holder;
+    control.querySelector(":scope > .auto-seek-bar-tip")?.remove();
+    const tip = document.createElement("span");
+    tip.className = "auto-seek-bar-tip";
+    tip.hidden = true;
+    control.append(tip);
+    const hide = () => { tip.hidden = true; };
+    control.addEventListener("pointermove", (event) => {
+      const box = holder.getBoundingClientRect();
+      const duration = view.timelineDuration;
+      if (current !== view || !(duration > 0) || !box.width) { hide(); return; }
+      const time = (duration * Math.min(box.width, Math.max(0, event.clientX - box.left))) / box.width;
+      const limit = view.tl?.cursor ?? Infinity;
+      const segment = time <= limit ? (view.barSegments || []).find(({ from, to }) => time >= from && time < to) : null;
+      if (!segment) { hide(); return; }
+      tip.textContent = actLabel(segment.act);
+      tip.style.setProperty("--as-c", actColour(segment.act));
+      tip.hidden = false;
+      const x = event.clientX;
+      // Above the player's own time tooltip, once it has moved for this
+      // pointer (about 54 px above the bar until it has shown).
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const area = control.getBoundingClientRect();
+        const time = control.querySelector(".vjs-mouse-display .vjs-time-tooltip")?.getBoundingClientRect();
+        const above = time?.height && time.bottom <= box.top ? time.top : box.top - 54;
+        tip.style.left = `${x - area.left}px`;
+        tip.style.top = `${above - area.top - 2}px`;
+      }));
+    });
+    control.addEventListener("pointerleave", hide);
   }
 
   const CHAPTERS_HTML = '<span class="auto-seek-tl-chapters-label" hidden>Top act</span><div class="auto-seek-tl-chapters" hidden></div>' +
@@ -1954,7 +2100,7 @@
     }
   }
 
-  function revealUpTo(view, upto) {
+  function revealUpTo(view, upto, live = false) {
     const tl = view.tl;
     const list = view.timeline?.querySelector(".auto-seek-tl-rows");
     if (!tl || !list) return;
@@ -2006,6 +2152,7 @@
       row.querySelector(".auto-seek-tl-track").appendChild(mark);
       if (wasShown) slideRow(list, row);
       else { row.classList.add("is-new"); placeRow(list, row); } // it opens up in its place
+      if (live) flyChip(view, row, name);
       tl.found = (tl.found || 0) + 1;
       const badge = view.timeline.querySelector(".auto-seek-tl-found");
       badge.hidden = false;
@@ -2036,9 +2183,11 @@
       const dt = now - last;
       last = now;
       tl.cursor = Math.min(tl.target, tl.cursor + tl.speed * dt);
-      revealUpTo(view, tl.cursor);
+      if (dt > 0 && tl.speed > 0) tl.live = true;
+      revealUpTo(view, tl.cursor, tl.live);
       placeLine(view, view.timeline.querySelector(".auto-seek-tl-scanline"), tl.cursor);
       scanThumb(view, tl.cursor);
+      scanBar(view, tl.cursor);
       view.timeline.querySelector(".auto-seek-tl-status").textContent =
         `· scanning… ${Math.min(99, Math.round((100 * tl.cursor) / tl.duration))}%`;
       if (tl.cursor >= tl.target && tl.final) { finishScan(view); return; }
@@ -2057,10 +2206,87 @@
     spriteThumb(view, thumb, time, 40); // auto-seek.css: 40 px tall
   }
 
+  // A new act's name drops from the frame on the scan line into its row,
+  // the frame flashing in the act's colour.
+  function flyChip(view, row, act) {
+    const panel = view.timeline;
+    if (!panel || reducedMotion() || panel.classList.contains("is-collapsed") || document.hidden) return;
+    const thumb = panel.querySelector(".auto-seek-tl-scanthumb");
+    const line = panel.querySelector(".auto-seek-tl-scanline");
+    const source = thumb && !thumb.hidden && thumb.offsetParent ? thumb : line;
+    if (!source || source.hidden || !source.offsetParent) return;
+    const colour = actColour(act);
+    if (source === thumb) {
+      thumb.animate([{ boxShadow: `0 0 0 2px ${colour}, 0 0 14px ${colour}` }, { boxShadow: "0 0 0 1px #ff3b30, 0 2px 10px rgba(0, 0, 0, 0.6)" }], { duration: 700, easing: "ease-out" });
+    }
+    const from = source.getBoundingClientRect();
+    const x = from.left + from.width / 2;
+    const y = from.bottom - 10;
+    const chip = document.createElement("span");
+    chip.className = "auto-seek-tl-chip";
+    chip.textContent = actLabel(act);
+    chip.style.setProperty("--as-c", colour);
+    chip.style.left = `${x}px`;
+    chip.style.top = `${y}px`;
+    document.body.appendChild(chip);
+    row.classList.add("is-awaiting");
+    const land = () => {
+      row.classList.remove("is-awaiting");
+      chip.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: "forwards" }).onfinish = () => chip.remove();
+    };
+    // Once the row has opened (or started sliding to its place), to where
+    // its name ends up.
+    setTimeout(() => {
+      const label = row.querySelector(".auto-seek-tl-label");
+      if (!label?.offsetParent || !chip.isConnected) { chip.remove(); row.classList.remove("is-awaiting"); return; }
+      const to = label.getBoundingClientRect();
+      const moving = new DOMMatrixReadOnly(getComputedStyle(label.closest(".auto-seek-tl-name")).transform).m42 || 0;
+      const dx = to.left - x;
+      const dy = to.top - moving - y;
+      chip.animate([
+        { transform: "translate(-50%, 0) scale(0.6)", opacity: 0 },
+        { transform: "translate(-50%, -6px) scale(1)", opacity: 1, offset: 0.25 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.92)`, opacity: 1 },
+      ], { duration: 650, easing: "cubic-bezier(0.3, 0.7, 0.2, 1)", fill: "forwards" }).onfinish = land;
+    }, 60);
+  }
+
+  // The scan done: the line runs off the end, each lane's solid blocks draw
+  // in from the left one row after another, the header says what it found,
+  // and the panel and the seek bar shine once. Without having watched it
+  // (or with reduced motion), the finished timeline just shows.
   function finishScan(view) {
-    const answer = view.tl.final;
+    const tl = view.tl;
+    const answer = tl.final;
+    const panel = view.timeline;
     view.tl = null;
-    paintTimeline(view, answer);
+    scanBar(view, null);
+    const live = tl.live && answer.state === "done" && panel && !panel.classList.contains("is-collapsed") && !document.hidden && !reducedMotion();
+    if (!live) { paintTimeline(view, answer); return; }
+    const took = tl.startedAt == null ? null : (performance.now() - tl.startedAt) / 1000;
+    const line = panel.querySelector(".auto-seek-tl-scanline");
+    const lane = shownLane(panel);
+    if (line && !line.hidden && lane) {
+      const body = line.parentElement.getBoundingClientRect();
+      const box = lane.getBoundingClientRect();
+      line.classList.add("is-leaving");
+      line.style.left = `${box.right - body.left + 40}px`;
+    }
+    setTimeout(() => {
+      line?.classList.remove("is-leaving");
+      if (current !== view || view.tl) return;
+      paintTimeline(view, answer);
+      const found = (view.timelineRows || []).filter((row) => row.first != null).length;
+      if (!found) return;
+      panel.querySelector(".auto-seek-tl-status").textContent =
+        `· ${found} act${found === 1 ? "" : "s"}${took > 30 ? ` · scanned in ${formatTime(took)}` : ""}`;
+      panel.classList.remove("is-finishing", "is-glowing");
+      void panel.offsetWidth; // restart the animations
+      panel.classList.add("is-finishing", "is-glowing");
+      sheenBar(view);
+      clearTimeout(view.finishTimer);
+      view.finishTimer = setTimeout(() => panel.classList.remove("is-finishing", "is-glowing"), 1800);
+    }, 380);
   }
 
   // A new answer from the server while it scans: aim the line at its
@@ -2086,6 +2312,7 @@
       tl = view.tl = {
         acts: answer.acts, duration, spacing, threshold: answer.threshold ?? 0.8,
         rows: new Map(), revealed: [], shown: -1, cursor: position, target: position, speed: 0, at: now, final: null,
+        startedAt: position <= 2 * spacing ? now : null, // for "scanned in", when this page saw it start
       };
       tl.frames = view.timelineFrames;
       tl.firsts = answer.firsts || {};
@@ -2170,12 +2397,12 @@
     if (!rows.length || !(duration > 0)) {
       list.innerHTML = answer.state === "done" ? '<p class="auto-seek-tl-empty">The model didn\'t see any act clearly in this scene.</p>' : "";
     } else {
-      list.innerHTML = CHAPTERS_HTML + rows.map((row) => {
+      list.innerHTML = CHAPTERS_HTML + rows.map((row, k) => {
         const sure = row.first != null;
         const mark = sure ? `<i class="auto-seek-tl-mark" style="left:${((100 * row.first) / duration).toFixed(2)}%"></i>` : "";
         const stops = sure ? actStops(row.points, row.first, TL_FLOOR, answer.threshold ?? 0.8, answer.spacing || 10, duration) : [];
         return `<div class="auto-seek-tl-row${sure ? "" : " is-unsure"}" data-act="${row.name}"${sure ? ` data-first="${row.first}"` : ""}` +
-          `${stops.length > 1 ? ` data-stops="${stops.join(",")}"` : ""} style="--as-c:${actColour(row.name)}">` +
+          `${stops.length > 1 ? ` data-stops="${stops.join(",")}"` : ""} style="--as-c:${actColour(row.name)};--as-i:${k}">` +
           nameButton(row.label, sure ? row.first : row.peakAt, sure, row.peak, stops.length) +
           `<div class="auto-seek-tl-lane" data-act="${row.name}"><div class="auto-seek-tl-track">${laneSvg(row.points, duration, answer.threshold ?? 0.8, answer.spacing || 10)}${mark}</div></div></div>`;
       }).join("");

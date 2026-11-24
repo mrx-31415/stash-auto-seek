@@ -119,6 +119,24 @@ def test_the_top_act_strip_and_the_act_on_now(page, base_url, timeline, errors) 
     assert errors == []
 
 
+def test_the_seek_bar_carries_the_top_act_strip(page, base_url, timeline, errors) -> None:
+    open_timeline(page, base_url, timeline)
+    holder = page.locator(".vjs-progress-holder")
+    expect(holder).to_have_class(re.compile(r"\bauto-seek-banded\b"))
+    # The two Kissing spans, dimmed on the bar and again in full colour
+    # inside the played part.
+    expect(holder.locator(".auto-seek-bar > .auto-seek-bar-acts i")).to_have_count(2)
+    expect(holder.locator(".auto-seek-bar-played .auto-seek-bar-acts i")).to_have_count(2)
+    # Hovering the bar over the second span names the act.
+    box = holder.bounding_box()
+    page.locator(".video-js").hover()
+    page.mouse.move(box["x"] + box["width"] * 31 / timeline["duration"], box["y"] + box["height"] / 2)
+    expect(page.locator(".auto-seek-bar-tip")).to_have_text("Kissing")
+    page.mouse.move(box["x"] + 2, box["y"] + box["height"] / 2)  # 0 s: no act
+    expect(page.locator(".auto-seek-bar-tip")).to_be_hidden()
+    assert errors == []
+
+
 def test_reviewing_keeps_a_paused_video_paused(
     page, base_url, timeline, errors
 ) -> None:
