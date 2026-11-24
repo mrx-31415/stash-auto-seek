@@ -1611,8 +1611,10 @@
     return Math.max(6 * spacing, (view.timelineDuration || 0) / 120);
   }
 
+  // A lane on screen to place lines by, or the ruler (same column) while
+  // no act has a sure start yet and every lane is folded away.
   function shownLane(panel) {
-    return [...(panel?.querySelectorAll(".auto-seek-tl-lane") || [])].find((lane) => lane.offsetParent && lane.clientWidth);
+    return [...(panel?.querySelectorAll(".auto-seek-tl-lane, .auto-seek-tl-ruler") || [])].find((lane) => lane.offsetParent && lane.clientWidth);
   }
 
   // The scene time under clientX on a lane, zoomed or not.

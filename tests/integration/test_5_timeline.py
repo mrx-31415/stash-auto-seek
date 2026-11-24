@@ -302,3 +302,32 @@ def test_zooming_into_the_lanes(page, base_url, timeline, errors) -> None:
     expect(label).to_have_text("Whole scene")
     expect(page.locator(".auto-seek-tl-window")).to_be_hidden()
     assert errors == []
+
+
+def test_the_scan_line_shows_before_any_act_is_sure(
+    page, base_url, marked, errors  # noqa: F811
+) -> None:
+    # Midway through a scan where no act has a sure start yet, so every lane
+    # is folded away: the line (and the frame riding on it) runs on the ruler.
+    unsure = [[t, [30, 20, 0]] for t, _ in FRAMES[:4]]
+
+    def handle(route: Route) -> None:
+        body = (route.request.post_data or "").replace(" ", "")
+        if '"op":"timeline"' in body:
+            scan = dict(answer(marked["duration"]), state="scanning", position=15,
+                        frames=unsure, firsts={}, scanned=4)  # fmt: skip
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"data": {"runPluginOperation": scan}}),
+            )
+        else:
+            route.continue_()
+
+    page.route("**/graphql", handle)
+    open_scene(page, base_url, marked)
+    panel = page.locator(".auto-seek-timeline.is-scanning")
+    expect(panel).to_be_visible(timeout=30_000)
+    expect(panel.locator(".auto-seek-tl-row:not(.is-unsure)")).to_have_count(0)
+    expect(panel.locator(".auto-seek-tl-scanline")).to_be_visible()
+    assert errors == []
