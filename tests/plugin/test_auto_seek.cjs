@@ -103,10 +103,18 @@ assert.equal(heatColor(2, 0.7), "rgb(255, 241, 194)");
   ]);
 }
 
-// One colour per group of acts; an act it doesn't know keeps the old amber.
-assert.equal(actColour("cowgirl"), actColour("missionary"));
-assert.notEqual(actColour("cowgirl"), actColour("oral on him"));
-assert.equal(actColour("something new"), "#f5b400");
+// A shade per act: every act in the settings' groups has its own, the
+// first of a group keeps the group's colour, and an act it doesn't know
+// keeps the old amber.
+{
+  const groups = vm.runInContext("ACT_GROUPS", context);
+  const colours = groups.flatMap((group) => group.acts.map(([act]) => actColour(act)));
+  assert.ok(colours.every((colour) => /^#[0-9a-f]{6}$/.test(colour) && colour !== "#f5b400"));
+  assert.equal(new Set(colours).size, colours.length);
+  assert.equal(actColour("missionary"), "#5b9dff");
+  assert.notEqual(actColour("cowgirl"), actColour("missionary"));
+  assert.equal(actColour("something new"), "#f5b400");
+}
 
 // The skipped-this-month total in words.
 assert.equal(spanText(40), "40 s");

@@ -320,14 +320,29 @@
     return out;
   }
 
-  // One colour per group of acts, so the lanes and chapters read at a glance.
-  const GROUP_COLOURS = {
-    Tease: "#ff7a59", Foreplay: "#ff5fa2", Masturbation: "#a3e635", Oral: "#ffb81f",
-    Hands: "#2dd4bf", Sex: "#5b9dff", Finish: "#b98cff",
+  // A shade per act within its group's colour, so the lanes and the top-act
+  // strip read by group at a glance and neighbouring acts still part. The
+  // first act listed in each group has the group's own colour; the others
+  // step darker first (OKLCH lightness, hue within 12 degrees), and the acts
+  // most often side by side on real timelines got the steps furthest apart.
+  const ACT_COLOURS = {
+    // Tease
+    "striptease / tease": "#ff7a59",
+    // Foreplay
+    "kissing": "#ff5fa2", "breast worship": "#cb348c", "massage / oil": "#fc8ea5", "ass worship": "#a50e54", "foot play": "#e04faa",
+    // Masturbation
+    "masturbation / toys": "#a3e635",
+    // Oral
+    "oral on him": "#ffb81f", "oral on her": "#d68b01", "69": "#d9ae21",
+    // Hands
+    "handjob": "#2dd4bf", "titjob": "#1ba88b", "fingering": "#3ee7e2",
+    // Sex
+    "missionary": "#5b9dff", "cowgirl": "#0579d0", "doggy style": "#90adfb", "prone bone": "#2150ae", "side/spoon": "#1291e5", "ballerina": "#90c0fd", "stand & carry": "#465ec3", "pile driving": "#54adfc", "scissoring": "#4e7ade",
+    // Finish
+    "facial": "#b98cff", "in mouth": "#8568d9", "on body": "#d79ffe", "creampie": "#7640ab",
   };
   function actColour(name) {
-    const group = ACT_GROUPS.find((candidate) => candidate.acts.some(([act]) => act === name));
-    return (group && GROUP_COLOURS[group.name]) || "#f5b400";
+    return ACT_COLOURS[name] || "#f5b400";
   }
 
   // A running total in words: "2 h 14 m", "14 m", "40 s".
