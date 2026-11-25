@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.3.1...auto-seek-v0.4.0) (2026-11-25)
+
+
+### Features
+
+* accurate model v2, better at finding where sex positions begin ([#22](https://github.com/mrx-31415/stash-auto-seek/issues/22)) ([7fdda89](https://github.com/mrx-31415/stash-auto-seek/commit/7fdda89ee8df8de416606511cb67d7faa8801dc0))
+* accurate model v3 with a timeline head that reads the frames either side ([#27](https://github.com/mrx-31415/stash-auto-seek/issues/27)) ([fd76187](https://github.com/mrx-31415/stash-auto-seek/commit/fd76187b7613aaadd019027dba392f08153574bf))
+* add an "Analyse only when I ask" setting with an Analyse scene button ([#31](https://github.com/mrx-31415/stash-auto-seek/issues/31)) ([432448b](https://github.com/mrx-31415/stash-auto-seek/commit/432448b33c170b2a840ce633ee2199c9b7ff2187))
+* choose where the action starts, with act-based models in two sizes ([#12](https://github.com/mrx-31415/stash-auto-seek/issues/12)) ([e2ae890](https://github.com/mrx-31415/stash-auto-seek/commit/e2ae8900d3f6ad70db8b8292857422dbeb92c4b2))
+* coherent act stretches on the timeline ([#24](https://github.com/mrx-31415/stash-auto-seek/issues/24)) ([7e846ab](https://github.com/mrx-31415/stash-auto-seek/commit/7e846abe02b0e52c1be23f3e8d2ca29a64ad4e86))
+* finish payoff, acts on the seek bar, discovery chips and glide on step ([#29](https://github.com/mrx-31415/stash-auto-seek/issues/29)) ([082fb13](https://github.com/mrx-31415/stash-auto-seek/commit/082fb13ac8e2df96be39619d46d4682a885d946f))
+* give each act its own shade of its group colour ([#30](https://github.com/mrx-31415/stash-auto-seek/issues/30)) ([e151364](https://github.com/mrx-31415/stash-auto-seek/commit/e151364170aed50813080f3a36fc73b4244c67e4))
+* make the start search and act timeline more satisfying to watch ([#20](https://github.com/mrx-31415/stash-auto-seek/issues/20)) ([49a52e1](https://github.com/mrx-31415/stash-auto-seek/commit/49a52e102d87867744684436b1765579fd47a452))
+* move review mode into a separate dev plugin that releases leave out ([#19](https://github.com/mrx-31415/stash-auto-seek/issues/19)) ([eb0094f](https://github.com/mrx-31415/stash-auto-seek/commit/eb0094f473332ccea3dcaf75cf6b14e2bf77b2a4))
+* pick where the action starts from a dropdown and a searchable list of acts ([5dea555](https://github.com/mrx-31415/stash-auto-seek/commit/5dea555552ec43c37ec9eb044922653396a0d5d8))
+* preview, smooth live scan and a review mode on the act timeline ([#16](https://github.com/mrx-31415/stash-auto-seek/issues/16)) ([f9b7b9f](https://github.com/mrx-31415/stash-auto-seek/commit/f9b7b9f9306a5c2e42b747e0d4de388b778cf3aa))
+* show every act across the scene in a live timeline under the player ([#15](https://github.com/mrx-31415/stash-auto-seek/issues/15)) ([ccb4005](https://github.com/mrx-31415/stash-auto-seek/commit/ccb4005715e72e755e98f89fa9014b13eee30094))
+* step through an act from its name, and see your review marks as frames ([977a6e2](https://github.com/mrx-31415/stash-auto-seek/commit/977a6e2865aa6b1f72aa9acb58ab9da2238fcb34))
+* step through an act's peaks, a green playhead, and no autoplay while reviewing ([3fc8d1e](https://github.com/mrx-31415/stash-auto-seek/commit/3fc8d1e8740368aabc93fa79ba9f759f0a2c11f8))
+* zoom and pan the act timeline ([#23](https://github.com/mrx-31415/stash-auto-seek/issues/23)) ([f09febe](https://github.com/mrx-31415/stash-auto-seek/commit/f09febe2131d311274b2e309ea6608047cfc47a2))
+
+
+### Bug Fixes
+
+* drop rimming from starts, the timeline and the act list ([#25](https://github.com/mrx-31415/stash-auto-seek/issues/25)) ([cac904f](https://github.com/mrx-31415/stash-auto-seek/commit/cac904f19779fdb680d58aaba248c9383261e449))
+* show the scan line and its frame before any act is sure ([#28](https://github.com/mrx-31415/stash-auto-seek/issues/28)) ([33ff22c](https://github.com/mrx-31415/stash-auto-seek/commit/33ff22c23c44216278ff7a71a921a537388aebb8))
+* use the player's clock on files Stash converts on the fly ([#21](https://github.com/mrx-31415/stash-auto-seek/issues/21)) ([47b908c](https://github.com/mrx-31415/stash-auto-seek/commit/47b908c05a9a9be9199ab2242fea6c192d8407b6))
+
 ## [0.3.1](https://github.com/mrx-31415/stash-auto-seek/compare/auto-seek-v0.3.0...auto-seek-v0.3.1) (2026-11-13)
 
 
