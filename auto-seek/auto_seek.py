@@ -1698,6 +1698,8 @@ def analyse(args: dict, server: dict) -> dict:
     )
     if current and not args.get("force"):
         return point
+    if args.get("peek"):  # only what is known: the viewer analyses on request
+        return {"missing": True}
     return analyse_scene(scene_id, server, eager=True)
 
 
@@ -1896,13 +1898,22 @@ def queue_scene(scene_id: str, server: dict, priority: int = 0) -> None:
     start_worker(server)
 
 
+def queued(scene_id: str) -> bool:
+    """Whether the background worker has the scene waiting in line."""
+    if not os.path.isfile(CACHE_PATH):
+        return False
+    with contextlib.closing(cache()) as connection:
+        return connection.execute("SELECT 1 FROM pending WHERE scene_id = ?", (scene_id,)).fetchone() is not None
+
+
 TIMELINE_STALE_SECONDS = 120
 
 
 def timeline_view(args: dict, server: dict) -> dict:
     """The page's timeline: the frames scanned so far with every act's score
     (in percent), where each act first shows, and whether the scan is still
-    running. A scene not scanned yet is queued first in line."""
+    running. A scene not scanned yet is queued first in line, unless the page
+    says not to (`queue: false`): then it is "idle" until asked."""
     scene_id = str(args["scene_id"])
     settings = settings_now(server)
     if not timeline_on(settings):
@@ -1925,6 +1936,8 @@ def timeline_view(args: dict, server: dict) -> dict:
         if not scanning and args.get("queue", True):
             # The scene asked for most recently goes first.
             queue_scene(scene_id, server, priority=int(time.time()))
+        elif not scanning and not queued(scene_id):
+            state = "idle"
     shown = row if current else None  # another model's frames don't show
     frames = shown["frames"] if shown else []
     firsts = shown["firsts"] if shown and state == "done" else {}

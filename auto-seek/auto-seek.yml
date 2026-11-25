@@ -39,6 +39,10 @@ settings:
     displayName: Use the accurate model
     description: A larger image model (ViT-B/16 instead of B/32) that finds starts more accurately, most of all where sex positions begin, draws a steadier act timeline (it reads each frame with the frames 10 s either side), and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
     type: BOOLEAN
+  manualAnalysis:
+    displayName: Analyse only when I ask
+    description: Opening a scene doesn't start any analysis. A start or timeline already worked out still shows, and an Analyse scene button under the player starts the rest. Handy while you go through scenes by hand.
+    type: BOOLEAN
   disableTimeline:
     displayName: Don't scan whole scenes
     description: After finding the start, Auto Seek scans the whole scene in the background and shows each act it sees under the player, with where it first shows. Turn this on to find only the start.

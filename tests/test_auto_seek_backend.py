@@ -573,6 +573,24 @@ def test_analyse_answers_from_the_cache(backend, monkeypatch):
     assert worked == ["8", "7"]
 
 
+def test_a_peek_never_starts_an_analysis(backend, monkeypatch):
+    backend.put_point(
+        {"scene_id": 7, "start": 300, "duration": 1800, "model": default_id(backend), "scores": [(300, 0.9)]}
+    )
+    monkeypatch.setattr(backend, "analyse_scene", lambda *args, **kwargs: pytest.fail("analysed"))
+    assert backend.analyse({"scene_id": 7, "peek": True}, {})["start"] == 300
+    assert backend.analyse({"scene_id": 8, "peek": True}, {}) == {"missing": True}
+
+
+def test_timeline_view_without_queueing_stays_idle(backend, monkeypatch):
+    fake_scene(backend, monkeypatch, lambda t: [0.0] * len(backend.ACTS))
+    monkeypatch.setattr(backend, "start_worker", lambda server: pytest.fail("worker started"))
+    assert backend.timeline_view({"scene_id": "5", "queue": False}, {})["state"] == "idle"
+    with backend.cache() as connection:
+        connection.execute("INSERT INTO pending (scene_id, added_at) VALUES ('5', 'a')")
+    assert backend.timeline_view({"scene_id": "5", "queue": False}, {})["state"] == "queued"
+
+
 def test_library_task_skips_answered_scenes_and_records_failures(backend, monkeypatch):
     monkeypatch.setattr(backend, "settings_now", lambda server: {"disableTimeline": True})
     backend.put_point({"scene_id": 1, "start": 30, "duration": 900, "model": default_id(backend)})
