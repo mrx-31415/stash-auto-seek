@@ -437,11 +437,14 @@
   }
 
   // While the model is still downloading on first use, keep waiting (the
-  // strip shows the download) instead of failing.
-  async function analyseOnServer(id) {
+  // strip shows the download) instead of failing. `peek`: only a start
+  // already worked out (Analyse only when I ask); none fails as `missing`.
+  async function analyseOnServer(id, peek) {
     for (;;) {
       try {
-        return await withTimeout(operation({ op: "analyse", scene_id: id }), ANALYSIS_TIMEOUT_MS);
+        const hit = await withTimeout(operation({ op: "analyse", scene_id: id, ...(peek && { peek: true }) }), ANALYSIS_TIMEOUT_MS);
+        if (hit.missing) throw Object.assign(new Error("This scene isn't analysed yet"), { missing: true });
+        return hit;
       } catch (error) {
         if (!/still downloading/i.test(error.message)) throw error;
         await sleep(2000);
@@ -449,19 +452,23 @@
     }
   }
 
-  // One analysis at a time, remembered per scene for this tab.
+  // One analysis at a time, remembered per scene for this tab. A peek needs
+  // no turn: it only looks the answer up.
   const known = new Map();
+  // Scenes the viewer asked to analyse (Analyse only when I ask), this tab.
+  const asked = new Set();
   let queue = Promise.resolve();
-  function startPoint(id) {
+  function startPoint(id, peek = false) {
     if (!known.has(id)) {
-      const run = queue.then(() => analyseOnServer(id)).then((hit) => ({
+      const ask = () => analyseOnServer(id, peek);
+      const run = (peek ? ask() : queue.then(ask)).then((hit) => ({
         start: hit.start,
         duration: hit.duration,
         marked: hit.model === "user",
         samples: hit.samples || [],
         threshold: hit.threshold,
       }));
-      queue = run.catch(() => {});
+      if (!peek) queue = run.catch(() => {});
       known.set(id, run);
       run.catch(() => known.delete(id));
     }
@@ -531,6 +538,7 @@
       busy: "Finding where the action starts…",
       ready: view.target == null ? "Skip intro" : `Skip intro (to ${formatTime(view.target)}${view.marked ? ", your mark" : ""})`,
       error: `Auto Seek: ${view.error}`,
+      idle: "Find where the action starts",
     }[view.state];
     view.button.dataset.state = view.state;
     view.button.title = label;
@@ -540,7 +548,7 @@
     const before = view.target == null ? timeOf(view) < 120 : timeOf(view) < view.target - 2;
     // Hidden by the setting, it still appears while it holds playback for an
     // automatic skip, since only it can say so.
-    const show = view.holding || view.needsTap || (!view.hideButton && view.state !== "error" && !view.dismissed && before);
+    const show = view.holding || view.needsTap || (!view.hideButton && view.state !== "error" && view.state !== "idle" && !view.dismissed && before);
     view.pill.hidden = !show;
     // While the server works the start out the pill shimmers; once it shows
     // its arrow, a tap jumps straight there.
@@ -1069,10 +1077,14 @@
   }
 
   // Look the start point up (or work it out) and keep the view in step.
+  // With Analyse only when I ask, only look it up until the viewer asks.
   function resolve(view) {
     if (view.promise) return view.promise;
     const stopWatching = view.state === "busy" ? watchProgress(view) : () => {};
-    view.promise = startPoint(view.id).then(
+    view.promise = settings().then(({ plugin }) => {
+      view.manual = plugin.manualAnalysis === true;
+      return startPoint(view.id, view.manual && !asked.has(view.id));
+    }).then(
       async (result) => {
         stopWatching();
         view.target = Math.max(0, result.start - (await leadIn()));
@@ -1088,6 +1100,13 @@
       },
       (error) => {
         stopWatching();
+        if (error.missing) {
+          view.state = "idle";
+          view.promise = null;
+          render();
+          showAsk(view, "start");
+          throw error;
+        }
         view.state = "error";
         view.error = error.message;
         view.promise = null;
@@ -1150,6 +1169,7 @@
       render();
       return;
     }
+    if (view.state === "idle") { analyseNow(view); return; }
     if (view.state === "error") { view.state = "busy"; render(); }
     if (view.target != null) {
       seekPlayer(view, view.target, true);
@@ -1172,11 +1192,14 @@
     view.autoDone = true;
     const { plugin } = await settings();
     if (plugin.autoSkip !== true || timeOf(view) > 15) return;
+    // Analyse only when I ask: skip to a start already known, never wait for one.
+    const manual = plugin.manualAnalysis === true && !asked.has(view.id);
+    if (manual) await resolve(view).catch(() => {});
     if (view.target != null) {
       if (!view.userSeeked && timeOf(view) < view.target - 2) seekPlayer(view, view.target, true);
       return;
     }
-    playFromStart(view, 30000);
+    if (!manual) playFromStart(view, 30000);
   }
 
   function attach(id, video, bar) {
@@ -1229,7 +1252,14 @@
     host.addEventListener("keydown", (event) => { if (event.key === " " || event.key === "k") takeOver(); }, true);
     video.addEventListener("playing", () => onFirstPlay(view));
     render();
-    // The strip shows at once, saying it is working, until bars arrive.
+    // The strip shows at once, saying it is working, until bars arrive (with
+    // Analyse only when I ask, once the viewer asks).
+    settings().then(({ plugin }) => { if (plugin.manualAnalysis !== true) showBusy(view); });
+    // Work it out right away, so a click finds the answer ready.
+    resolve(view).catch(() => {});
+  }
+
+  function showBusy(view) {
     ensureStrip(view).then((strip) => {
       if (strip && view.state === "busy") {
         strip.classList.add("is-busy");
@@ -1238,7 +1268,35 @@
         labelStrip(view, `Auto Seek: ${view.error}`);
       }
     }).catch(() => {});
-    // Work it out right away, so a click finds the answer ready.
+  }
+
+  // Analyse only when I ask: under the player, what isn't worked out yet and
+  // a button that starts it (`what`: the start, or the whole-scene scan).
+  function showAsk(view, what) {
+    if (current !== view) return;
+    const wrapper = view.video.closest(".video-wrapper");
+    if (!wrapper?.parentElement) return;
+    document.querySelectorAll(".auto-seek-ask").forEach((old) => old.remove());
+    const ask = document.createElement("div");
+    ask.className = "auto-seek-ask";
+    ask.innerHTML = `<span class="auto-seek-ask-text">${what === "start"
+      ? "Auto Seek hasn't analysed this scene yet."
+      : "Auto Seek hasn't scanned the acts in this scene yet."}</span>` +
+      `<button type="button" class="btn btn-secondary btn-sm auto-seek-ask-button">${what === "start" ? "Analyse scene" : "Scan acts"}</button>`;
+    ask.querySelector("button").addEventListener("click", () => analyseNow(view));
+    const host = wrapper.closest(".scene-player-container");
+    if (host) host.appendChild(ask); else (view.strip?.isConnected ? view.strip : wrapper).after(ask);
+    view.ask = ask;
+  }
+
+  function analyseNow(view) {
+    asked.add(view.id);
+    view.ask?.remove();
+    if (view.target != null) { watchTimeline(view); return; }
+    view.state = "busy";
+    view.promise = null;
+    render();
+    showBusy(view);
     resolve(view).catch(() => {});
   }
 
@@ -1249,11 +1307,11 @@
     const id = sceneIdFrom(pathname);
     if (!id) {
       current = null;
-      document.querySelectorAll(".auto-seek-strip, .auto-seek-timeline").forEach((element) => element.remove());
+      document.querySelectorAll(".auto-seek-strip, .auto-seek-timeline, .auto-seek-ask").forEach((element) => element.remove());
       return;
     }
     // Start right away; the player mounts a moment later and finds it running.
-    startPoint(id).catch(() => {});
+    settings().then(({ plugin }) => startPoint(id, plugin.manualAnalysis === true && !asked.has(id))).catch(() => {});
     const tryAttach = () => {
       const bar = document.querySelector(".video-js .vjs-control-bar");
       const video = document.querySelector(".video-js video");
@@ -2400,6 +2458,7 @@
       queued: "· waiting to scan the whole scene…",
       scanning: `· scanning… ${Math.min(99, Math.round((100 * (answer.scanned || 0)) / (answer.planned || 1)))}%`,
       failed: `· the scan failed: ${answer.error || "unknown error"}`,
+      idle: "· partly scanned",
       done: found.length ? `· ${found.length} found` : "· none found",
     }[answer.state] || "";
     panel.classList.toggle("is-scanning", scanning);
@@ -2435,13 +2494,18 @@
       while (current === view) {
         let answer;
         try {
-          answer = await operation({ op: "timeline", scene_id: view.id });
+          answer = await operation({ op: "timeline", scene_id: view.id, queue: !view.manual || asked.has(view.id) });
         } catch (error) {
           await sleep(5 * TIMELINE_POLL_MS);
           continue;
         }
         if (current !== view) break;
         if (answer.state === "off") { view.timeline?.remove(); break; }
+        if (answer.state === "idle") {
+          if (answer.frames?.length) paintTimeline(view, answer);
+          showAsk(view, "timeline");
+          break;
+        }
         if (answer.state === "scanning" || view.tl) followScan(view, answer);
         else paintTimeline(view, answer);
         if (answer.state === "done" || answer.state === "failed") break;

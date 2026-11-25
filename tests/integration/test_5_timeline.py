@@ -349,3 +349,43 @@ def test_the_scan_line_shows_before_any_act_is_sure(
     expect(panel.locator(".auto-seek-tl-row:not(.is-unsure)")).to_have_count(0)
     expect(panel.locator(".auto-seek-tl-scanline")).to_be_visible()
     assert errors == []
+
+
+def test_analyse_only_when_asked(page, base_url, marked, configure, errors) -> None:  # noqa: F811
+    """With the setting on, opening a scene only looks its answers up; the
+    Analyse scene button under the player starts the analysis and the scan."""
+    configure(manualAnalysis=True)
+    asked: list[dict] = []
+
+    def handle(route: Route) -> None:
+        body = route.request.post_data or ""
+        args = (json.loads(body).get("variables") or {}).get("args") or {}
+        if args.get("op") in ("analyse", "timeline"):
+            asked.append(args)
+        if args.get("op") == "analyse" and args.get("peek"):
+            reply = {"missing": True}  # as for a scene not analysed yet
+        elif args.get("op") == "timeline":
+            reply = answer(marked["duration"]) if args.get("queue") else {"state": "idle", "frames": []}
+        else:
+            route.continue_()
+            return
+        data = {"data": {"runPluginOperation": reply}}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+
+    page.route("**/graphql", handle)
+    open_scene(page, base_url, marked)
+    ask = page.locator(".auto-seek-ask")
+    expect(ask).to_contain_text("hasn't analysed this scene yet", timeout=30_000)
+    expect(page.locator(".auto-seek-pill")).to_be_hidden()
+    expect(page.locator(".auto-seek-timeline")).to_have_count(0)
+    assert asked and all(a.get("peek") for a in asked if a["op"] == "analyse")
+    ask.get_by_role("button", name="Analyse scene").click()
+    expect(ask).to_have_count(0)
+    # The real analysis answers with the marked start, then the scan's rows show.
+    expect(page.locator(".auto-seek-button")).to_have_attribute(
+        "title", re.compile(r"Skip intro \(to 0:17"), timeout=30_000
+    )
+    expect(page.locator(".auto-seek-tl-row[data-act='kissing']")).to_be_visible(timeout=30_000)
+    assert any(a["op"] == "analyse" and not a.get("peek") for a in asked)
+    assert any(a["op"] == "timeline" and a.get("queue") for a in asked)
+    assert errors == []

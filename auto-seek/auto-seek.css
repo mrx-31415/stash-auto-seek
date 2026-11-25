@@ -689,6 +689,20 @@
 }
 
 /* ── act timeline, under the player ─────────────────────────────────── */
+/* Analyse only when I ask: what isn't worked out yet, and a button for it. */
+.auto-seek-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+}
+.auto-seek-ask-text { opacity: 0.75; }
+
 .auto-seek-timeline {
   --as-tl-bar: rgba(245, 180, 0, 0.45);
   --as-tl-hit: #f5b400;

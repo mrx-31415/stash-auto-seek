@@ -16,6 +16,7 @@ def test_stash_lists_the_plugin_with_its_task_hook_and_settings(gql) -> None:
     assert {s["name"] for s in plugin["settings"]} == {
         "startStage", "accurateModel", "autoSkip", "leadIn", "hideSkipButton", "hideScanChart",
         "disableNewScenes", "threads", "disableDownload", "disableTimeline", "timelineSpacing",
+        "manualAnalysis",
     }  # fmt: skip
 
 
