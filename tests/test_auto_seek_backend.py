@@ -761,6 +761,10 @@ def test_start_stage_and_model_settings(backend):
     assert backend.stage_of({"startStage": "acts: nothing yet"}) == "oral"
     assert backend.model_id("fast", picked) != backend.model_id("fast", "acts:1")
     assert backend.size_of({"accurateModel": True}) == "accurate"
+    # The large model wins over the accurate one, and reads its own head.
+    assert backend.size_of({"accurateModel": True, "largeModel": True}) == "large"
+    assert backend.size_of({"largeModel": False}) == "fast"
+    assert backend.MODELS["large"]["embedding"] == 1152 and "head" in backend.MODELS["large"]
     # Every stage and size caches under its own id, so a change recomputes.
     ids = {backend.model_id(size, stage) for size in backend.MODELS for stage in backend.STAGES}
     assert len(ids) == len(backend.MODELS) * len(backend.STAGES)
@@ -776,6 +780,9 @@ def test_start_stage_and_model_settings(backend):
     assert backend.chosen_size() == "accurate"
     assert backend.MODELS["accurate"] in backend.FILES
     assert backend.MODELS["fast"] not in backend.FILES
+    backend.choose("large")
+    assert backend.MODELS["large"] in backend.FILES and backend.MODELS["large"]["head"] in backend.FILES
+    assert backend.MODELS["accurate"] not in backend.FILES
 
 
 def test_analysis_scores_the_stage_and_a_frame_ten_seconds_on(backend, monkeypatch):

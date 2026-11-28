@@ -67,7 +67,7 @@ WORKER_LOCK_PATH = os.path.join(DATA_DIR, "worker.lock")
 # distorted its act scores; v3: also told apart whose hand, and comes with a
 # timeline head that reads each frame together with the frames 10 s either
 # side). Pinned to a commit of https://huggingface.co/mrx-31415/auto-seek.
-HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/cabf455b86e1766a55c763fc4edd6d8c068ecf4f/"
+HF = "https://huggingface.co/mrx-31415/auto-seek/resolve/d7f37908fe152efa51633af3b6092b1f5c4ca8db/"
 MODELS = {
     "fast": {
         "path": "models/auto-seek-acts-b32-v1.onnx",
@@ -88,6 +88,24 @@ MODELS = {
             "url": HF + "auto-seek-acts-b16-v3-head.onnx",
             "sha256": "8fc08204cf5cd8d388382878244303683a1dd099fe364c9bf9ff64baf589d003",
             "size": 2157796,
+        },
+    },
+    # Experimental: SigLIP2 SO400M/14 with its last 12 blocks tuned the same
+    # way. Finds acts clearly more reliably on hand-checked frames, but takes
+    # about six times as long per frame as B/16 and is a 0.5 GB download.
+    # The MatMuls int8 distorts most stay in float.
+    "large": {
+        "path": "models/auto-seek-acts-so400m-v1.onnx",
+        "url": HF + "auto-seek-acts-so400m-v1.onnx",
+        "sha256": "213451d58bacecfc7004a86bd164ee55d16dadf08969590154123a2ddf41635d",
+        "size": 537090458,
+        "id": "acts-so400m-v1",
+        "embedding": 1152,
+        "head": {
+            "path": "models/auto-seek-acts-so400m-v1-head.onnx",
+            "url": HF + "auto-seek-acts-so400m-v1-head.onnx",
+            "sha256": "c6d0ef6ff0a7a257a9f8ec0fa912921f0e9c2e4db157f21997adb5aa78fa498b",
+            "size": 4779236,
         },
     },
 }
@@ -144,6 +162,8 @@ def stage_of(settings: dict) -> str:
 
 
 def size_of(settings: dict) -> str:
+    if settings.get("largeModel") is True:
+        return "large"
     return "accurate" if settings.get("accurateModel") is True else "fast"
 
 

@@ -2520,10 +2520,11 @@
   // Auto Seek's group under Settings → Plugins: the start and the model get
   // a dropdown and a searchable grid of acts in place of the plain text and
   // on/off fields; the other settings stay Stash's own.
-  const OWN_SETTINGS = new Set(["startStage", "accurateModel"]);
+  const OWN_SETTINGS = new Set(["startStage", "accurateModel", "largeModel"]);
   const MODEL_OPTIONS = [
     { value: "fast", label: "Fast (ViT-B/32)", note: "The default. About 0.15 s a frame on two CPU threads." },
     { value: "accurate", label: "Accurate (ViT-B/16)", note: "Finds starts more accurately, most of all where sex positions begin, and draws a steadier act timeline (each frame read with the frames 10 s either side); about four times as slowly (0.6 s a frame). Downloads in place of the fast model." },
+    { value: "large", label: "Large (SO400M, experimental)", note: "Tells acts apart more reliably than the accurate model, but takes about six times as long per frame and is a 0.5 GB download." },
   ];
 
   function StartSettings({ pluginID }) {
@@ -2635,8 +2636,8 @@
           inputId: "auto-seek-model-select",
           isSearchable: false,
           options: MODEL_OPTIONS,
-          value: MODEL_OPTIONS[values.accurateModel === true ? 1 : 0],
-          onChange: (option) => option && save({ accurateModel: option.value === "accurate" }),
+          value: MODEL_OPTIONS[values.largeModel === true ? 2 : values.accurateModel === true ? 1 : 0],
+          onChange: (option) => option && save({ accurateModel: option.value === "accurate", largeModel: option.value === "large" }),
         }))));
   }
 

@@ -48,7 +48,7 @@ page.window.__autoSeekLoaded = false;
 vm.createContext(page);
 vm.runInContext(source.replace("window.__autoSeekLoaded", "window.__autoSeekLoadedUnderTest"), page);
 assert.ok(patched, "PluginSettings is patched");
-const settings = ["startStage", "accurateModel", "leadIn"].map((name) => ({ name }));
+const settings = ["startStage", "accurateModel", "largeModel", "leadIn"].map((name) => ({ name }));
 const renderer = { me: true };
 function next(...args) { calls.push({ self: this, args }); return "native"; }
 
@@ -72,7 +72,7 @@ for (const extra of [[], ["legacy context"]]) {
 delete window.PluginApi.hooks.useSettings;
 calls.length = 0;
 assert.equal(patched.call(renderer, { pluginID: "auto-seek", settings }, next), "native");
-assert.equal(calls[0].args[0].settings.length, 3);
+assert.equal(calls[0].args[0].settings.length, 4);
 
 console.log(JSON.stringify({
   groups: ACT_GROUPS.map((group) => ({ name: group.name, acts: group.acts.map((act) => act[0]) })),
