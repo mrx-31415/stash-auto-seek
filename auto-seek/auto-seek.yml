@@ -39,6 +39,10 @@ settings:
     displayName: Use the accurate model
     description: A larger image model (ViT-B/16 instead of B/32) that finds starts more accurately, most of all where sex positions begin, draws a steadier act timeline (it reads each frame with the frames 10 s either side), and takes about four times as long to score each frame (0.6 s instead of 0.15 s on two desktop CPU threads). Changing it downloads that model in place of the other and works the start points out again.
     type: BOOLEAN
+  largeModel:
+    displayName: Use the large model (experimental)
+    description: The largest image model (SigLIP2 SO400M), which tells acts apart more reliably than the accurate model but takes about six times as long per frame (about 0.4 s of model time on two CPU threads, against 0.06 s) and is a 0.5 GB download. Overrides the accurate model while on. Changing it works the start points out again.
+    type: BOOLEAN
   manualAnalysis:
     displayName: Analyse only when I ask
     description: Opening a scene doesn't start any analysis. A start or timeline already worked out still shows, and an Analyse scene button under the player starts the rest. Handy while you go through scenes by hand.
